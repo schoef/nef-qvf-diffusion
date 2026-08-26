@@ -159,6 +159,7 @@ def fit_recentred(
 
     mu = 1e-3
     value = float(0.5 * residual(c, target) @ residual(c, target))
+    history = [{"theta": theta, "objective": value, "coefficients": c.copy()}]
     h = 1e-4
     for iteration in range(max_iterations):
         a, b = np.real(c), np.imag(c)
@@ -203,6 +204,9 @@ def fit_recentred(
                 c, theta = trial_c, trial_theta
                 phi, target, member = phi_t, target_t, member_t
                 value = trial_value
+                history.append(
+                    {"theta": theta, "objective": value, "coefficients": c.copy()}
+                )
                 mu = max(mu * 0.3, 1e-14)
                 accepted = True
                 break
@@ -225,12 +229,14 @@ def fit_recentred(
         c = c / np.linalg.norm(c)
         phi, target, member = pieces(theta)
 
+    history.append({"theta": theta, "objective": value, "coefficients": c.copy()})
     return {
         "theta": theta,
         "coefficients": c,
         "member": member,
         "objective": value,
         "iterations": iteration + 1,
+        "history": history,
     }
 
 
@@ -278,6 +284,27 @@ def run_offset_sweep(
         tv = _distance(target, law, grid)
 
         true_theta = _true_arclength(family, baseline, target.members[0])
+        trace = []
+        for entry in fit["history"]:
+            step_member = with_mean(
+                family, baseline, mean_at_arclength(family, baseline, entry["theta"])
+            )
+            step_target = Target(
+                label=target.label,
+                family=family,
+                baseline=step_member,
+                sample=target.sample,
+                density=target.density,
+                members=target.members,
+            )
+            step_law = law_from_amplitude(step_target, entry["coefficients"], grid)
+            trace.append(
+                {
+                    "theta": entry["theta"],
+                    "objective": entry["objective"],
+                    "tv": _distance(target, step_law, grid),
+                }
+            )
         rows.append(
             {
                 "offset": offset,
@@ -286,6 +313,7 @@ def run_offset_sweep(
                 "theta": fit["theta"],
                 "true_theta": true_theta,
                 "iterations": fit["iterations"],
+                "trace": trace,
             }
         )
         print(
@@ -345,6 +373,72 @@ def plot_sweep(result: dict[str, Any], *, output_dir: Any = None) -> str:
     return str(path)
 
 
+def plot_convergence(result: dict[str, Any], *, output_dir: Any = None) -> str:
+    """Three panels per accepted LM step: objective, theta error, and TV.
+
+    The dashed horizontals in the right panel are the plain fit's final
+    total variation at the same offset -- the level each trace must beat."""
+
+    rows = result["rows"]
+    figure, axes = plt.subplots(1, 3, figsize=(12.0, 4.0))
+    colors = plt.cm.viridis(np.linspace(0.0, 0.9, len(rows)))
+    for row, color in zip(rows, colors, strict=True):
+        steps = np.arange(len(row["trace"]))
+        label = rf"$\theta_\star = {row['true_theta']:.2f}$"
+        axes[0].semilogy(
+            steps, [e["objective"] for e in row["trace"]], color=color, label=label
+        )
+        theta_error = [
+            max(abs(e["theta"] - row["true_theta"]), 1e-6) for e in row["trace"]
+        ]
+        tvs = [e["tv"] for e in row["trace"]]
+        axes[1].semilogy(steps, theta_error, color=color)
+        axes[2].semilogy(steps, tvs, color=color)
+        # the last entry is the moment-gauge polish, not an LM step
+        axes[1].plot(steps[-1], theta_error[-1], "o", mfc="none", color=color, ms=6)
+        axes[2].plot(steps[-1], tvs[-1], "o", mfc="none", color=color, ms=6)
+        axes[2].axhline(row["plain_tv"], color=color, ls="--", lw=0.8, alpha=0.6)
+    axes[0].set_ylim(bottom=1e-12)
+    axes[0].set_ylabel("objective")
+    axes[1].set_ylabel(r"$|\hat\theta - \theta_\star|$")
+    axes[2].set_ylabel("total variation")
+    axes[1].text(
+        0.03,
+        0.03,
+        "circles: after the moment gauge",
+        transform=axes[1].transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        color="0.4",
+    )
+    axes[2].text(
+        0.97,
+        0.5,
+        "dashed: plain fit, final",
+        transform=axes[2].transAxes,
+        ha="right",
+        va="center",
+        fontsize=8,
+        color="0.4",
+    )
+    for axis in axes:
+        axis.set_xlabel("accepted LM step")
+    axes[0].legend(fontsize=8, title="displacement")
+    figure.suptitle(f"{result['name']}, K = {result['degree']}: joint-fit convergence")
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{result['name']}-K{result['degree']}-convergence.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return str(path)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--family", default="poisson")
@@ -360,6 +454,7 @@ def main() -> None:
     )
     if args.plot:
         print(f"  figure: {plot_sweep(result, output_dir=args.output)}")
+        print(f"  figure: {plot_convergence(result, output_dir=args.output)}")
 
 
 if __name__ == "__main__":
