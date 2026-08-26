@@ -128,9 +128,8 @@ def run_study(
 
     grid = np.linspace(-6.0, 6.0, 401)
     truth = pair_density(rho, grid)
-    tv = total_variation(
-        truth, fitted_pair_law(fit["coefficients"], grid, degree), grid
-    )
+    law = fitted_pair_law(fit["coefficients"], grid, degree)
+    tv = total_variation(truth, law, grid)
 
     kappa = schmidt_parameter(rho)
     return {
@@ -144,7 +143,133 @@ def run_study(
         "predicted": kappa ** np.arange(degree + 1),
         "parity_defect": parity_defect(matrix),
         "total_variation": tv,
+        "grid": grid,
+        "truth": truth,
+        "law": law,
+        "coefficients": fit["coefficients"],
     }
+
+
+def rotated_projection(
+    coefficients: np.ndarray, degree: int, sign: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Project the fitted law onto ``u = (x + sign * y) / sqrt(2)`` by a
+    line integral over the conjugate coordinate on a rotated lattice."""
+
+    u = np.linspace(-6.0, 6.0, 241)
+    v = np.linspace(-8.5, 8.5, 341)
+    uu, vv = np.meshgrid(u, v, indexing="ij")
+    x = (uu + vv) / np.sqrt(2.0)
+    y = sign * (uu - vv) / np.sqrt(2.0)
+    matrix = coefficients.reshape(degree + 1, degree + 1)
+    basis_x = np.asarray(Normal.basis(x.reshape(-1), degree, BASELINE), dtype=float)
+    basis_y = np.asarray(Normal.basis(y.reshape(-1), degree, BASELINE), dtype=float)
+    field = np.einsum("an,nm,am->a", basis_x, matrix, basis_y).reshape(x.shape)
+    reference = np.exp(-0.5 * (x * x + y * y)) / (2.0 * np.pi)
+    law = np.abs(field) ** 2 * reference
+    return u, np.trapezoid(law, v, axis=1)
+
+
+def plot_quality(result: dict[str, Any], *, output_dir: Any = None) -> str:
+    """Law-level diagnostics: contours, difference, projections, conditionals."""
+
+    rho = result["rho"]
+    grid, truth, law = result["grid"], result["truth"], result["law"]
+    cell = np.gradient(grid)
+    figure, axes = plt.subplots(2, 2, figsize=(10.5, 8.5))
+
+    # contour overlay
+    axis = axes[0, 0]
+    levels = np.max(truth) * np.array([0.01, 0.05, 0.2, 0.5, 0.9])
+    axis.contour(grid, grid, truth.T, levels=levels, colors="0.3", linewidths=1.0)
+    axis.contour(
+        grid,
+        grid,
+        law.T,
+        levels=levels,
+        colors="#b0413e",
+        linewidths=1.0,
+        linestyles="--",
+    )
+    axis.set_xlim(-4.5, 4.5)
+    axis.set_ylim(-4.5, 4.5)
+    axis.set_xlabel("$x_1$")
+    axis.set_ylabel("$x_2$")
+    axis.set_title("contours: truth (solid), fitted (dashed)")
+
+    # signed difference
+    axis = axes[0, 1]
+    difference = law - truth
+    scale = float(np.max(np.abs(difference)))
+    image = axis.pcolormesh(
+        grid, grid, difference.T, cmap="RdBu_r", vmin=-scale, vmax=scale
+    )
+    figure.colorbar(image, ax=axis, shrink=0.85)
+    axis.set_xlim(-4.5, 4.5)
+    axis.set_ylim(-4.5, 4.5)
+    axis.set_xlabel("$x_1$")
+    axis.set_ylabel("$x_2$")
+    axis.set_title(f"fitted $-$ truth   (TV = {result['total_variation']:.2e})")
+
+    # 1D projections: marginal and the rotated axes
+    axis = axes[1, 0]
+    marginal = law @ cell
+    axis.plot(grid, marginal, color="#b0413e", label="fitted $x_1$ marginal")
+    normal = np.exp(-0.5 * grid**2) / np.sqrt(2.0 * np.pi)
+    axis.plot(grid, normal, color="0.3", ls=":", lw=1.2, label="$N(0,1)$")
+    for sign, style in ((1.0, "-"), (-1.0, "--")):
+        centers, projected = rotated_projection(
+            result["coefficients"], result["degree"], sign
+        )
+        variance = 1.0 + sign * rho
+        exact = np.exp(-0.5 * centers**2 / variance) / np.sqrt(2.0 * np.pi * variance)
+        tag = "+" if sign > 0 else "-"
+        axis.plot(
+            centers,
+            projected,
+            style,
+            color="#2a6f97",
+            label=rf"fitted $(x_1 {tag} x_2)/\sqrt{{2}}$",
+        )
+        axis.plot(centers, exact, ls=":", lw=1.2, color="0.3")
+    axis.set_xlim(-5.0, 5.0)
+    axis.set_xlabel("projected coordinate")
+    axis.set_ylabel("density")
+    axis.set_title(r"1D projections (dotted: exact $N(0, 1\pm\rho)$)")
+    axis.legend(fontsize=8, frameon=False)
+
+    # conditional slices
+    axis = axes[1, 1]
+    colors = plt.cm.viridis(np.linspace(0.0, 0.8, 3))
+    for x1, color in zip((0.0, 1.0, 2.0), colors, strict=True):
+        row = int(np.argmin(np.abs(grid - x1)))
+        fitted = law[row] / np.trapezoid(law[row], grid)
+        variance = 1.0 - rho * rho
+        exact = np.exp(-0.5 * (grid - rho * x1) ** 2 / variance) / np.sqrt(
+            2.0 * np.pi * variance
+        )
+        axis.plot(grid, fitted, color=color, label=rf"$x_1 = {x1:g}$")
+        axis.plot(grid, exact, ls=":", lw=1.2, color="0.3")
+    axis.set_xlim(-4.5, 4.5)
+    axis.set_xlabel("$x_2$")
+    axis.set_ylabel(r"$p(x_2 \mid x_1)$")
+    axis.set_title("conditional slices (dotted: exact)")
+    axis.legend(fontsize=8, frameon=False)
+
+    figure.suptitle(
+        rf"correlated Gaussian pair, $\rho = {rho:g}$, $K = {result['degree']}$"
+    )
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"pair-schmidt-quality-rho{rho:g}.png"
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+    return str(path)
 
 
 def plot_study(results: list[dict[str, Any]], *, output_dir: Any = None) -> str:
@@ -207,6 +332,8 @@ def main() -> None:
             print(f"          predicted       {result['predicted']}")
     if args.plot:
         print(f"figure: {plot_study(results, output_dir=args.output)}")
+        for result in results:
+            print(f"figure: {plot_quality(result, output_dir=args.output)}")
 
 
 if __name__ == "__main__":
