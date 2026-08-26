@@ -231,7 +231,9 @@ def main() -> None:
         for axis, name in zip(axes, ("normal", "poisson", "gamma"), strict=True):
             result = study_family(name, xi_scaled(name, xi), degree)
             grid = result["grid"]
-            axis.pcolormesh(grid, grid, result["law"].T, cmap="viridis")
+            axis.pcolormesh(
+                grid, grid, result["law"].T, cmap="viridis", rasterized=True
+            )
             rho = result["moments"]["correlation"]
             axis.set_title(rf"{name}, $\rho = {rho:.3f}$")
             axis.set_xlabel("$x_1$")
