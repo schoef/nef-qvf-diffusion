@@ -254,6 +254,7 @@ def main() -> None:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"pairing-laws-xi{xi:g}.png"
         figure.savefig(path, dpi=150)
+        figure.savefig(path.with_suffix(".pdf"))
         plt.close(figure)
         print(f"figure: {path}")
 
