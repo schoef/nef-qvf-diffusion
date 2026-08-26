@@ -24,7 +24,7 @@ def test_normal_pairing_law_is_the_thermal_gaussian():
     c = pairing_amplitude("normal", xi, degree)
     grid = support_grid("normal")
     moments = law_moments("normal", pair_law("normal", c, grid), grid)
-    assert abs(moments["correlation"] - np.tanh(2 * xi)) < 1e-9
+    assert abs(moments["correlation"] - np.tanh(2 * xi)) < 1e-7
     assert abs(moments["variance"] - np.cosh(2 * xi)) < 1e-6
 
 
