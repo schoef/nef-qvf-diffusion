@@ -533,6 +533,10 @@ python -m pytest -q
 | `tests/applications/test_two_state_hmm.py` | transfer matrix vs enumeration, flow, moments, **single site** |
 | `tests/applications/test_one_site_diffusion.py` | schedule, certified slices, warm vs cold start, blended tie algebra, slice truths vs quadrature, SNR formula vs lattice sum, predicted floor, exact-chamber latent split, both samplers, GHS refusal |
 | `tests/applications/test_shifted_baseline_probability_modes.py` | mode projection and damping |
+| `tests/package/test_baseline_flow.py` | the baseline-flow group `U = exp(theta G0)`: Poisson and NB transports, vacuum overlap = affinity |
+| `tests/applications/test_amplitude_fit_recentred.py` | arclength round trip, wall removal at K = 4, moment gauge, shape preservation |
+| `tests/applications/test_two_site_diffusion.py` | Kronecker stack vs products, exact pair coefficients, branch expansion, cross-moment latent resolution, pair study |
+| `tests/applications/test_d_site_diffusion.py` | canonical forms, product-state pair moments, bond-two exactness, sequential sampler, chain study: slices, latent recovery, generation, likelihood |
 
 ---
 
