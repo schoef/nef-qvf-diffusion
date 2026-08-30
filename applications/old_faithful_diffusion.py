@@ -36,6 +36,9 @@ import argparse
 import matplotlib
 
 matplotlib.use("Agg")
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 
 from applications.amplitude_fit_complex import (
@@ -142,6 +145,7 @@ def stratification(tower, train, family, baseline, k):
         f"  (R_11 {signal:.4f}, 2SE {floor:.4f});"
         f" terminal sigma2/sigma1 {sigma2_terminal:.4f}"
     )
+    return float(t_star)
 
 
 # ------------------------------------------------------------- sampling --
@@ -307,6 +311,192 @@ def held_out_nll(family, baseline, c, pairs, k):
     return -float(np.mean(lr + np.log(np.abs(h) ** 2 + 1e-300)))
 
 
+# ---------------------------------------------------------------- figures --
+def output_directory(output_dir=None):
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def plot_tower(tower, t_star, k, output_dir=None):
+    """The stratification page: Schmidt melting with the predicted birth,
+    and the coefficient pyramid filling in along the schedule."""
+
+    times = np.array(sorted(tower, reverse=True))
+    spectra = np.array(
+        [np.linalg.svd(tower[t].reshape(k + 1, k + 1), compute_uv=False) for t in times]
+    )
+    spectra = spectra / spectra[:, :1]
+
+    figure = plt.figure(figsize=(11.0, 6.6))
+    grid_spec = figure.add_gridspec(2, 4, height_ratios=[1.15, 1.0])
+
+    axis = figure.add_subplot(grid_spec[0, :])
+    axis.semilogy(
+        times,
+        spectra[:, 1],
+        "o-",
+        color="#1b6ca8",
+        label=r"$\sigma_2/\sigma_1$ (latent channel)",
+    )
+    axis.semilogy(
+        times, spectra[:, 2], "s-", color="#b0413e", label=r"$\sigma_3/\sigma_1$"
+    )
+    axis.axvline(t_star, color="0.4", ls=":", lw=1.2)
+    axis.text(
+        t_star - 0.03,
+        2e-3,
+        r"predicted birth $t^\ast$",
+        fontsize=9,
+        color="0.3",
+        rotation=90,
+        va="bottom",
+        ha="right",
+    )
+    axis.invert_xaxis()
+    axis.set_xlabel("slice time $t$")
+    axis.set_ylabel("Schmidt value / leading")
+    axis.set_title(
+        "entanglement stratification: channels are born on schedule",
+        fontsize=10,
+    )
+    axis.legend(frameon=False, fontsize=9)
+
+    show = [times[0], 1.17, 0.42, 0.0]
+    for column, t_show in enumerate(show):
+        key = min(tower, key=lambda u: abs(u - t_show))
+        axis = figure.add_subplot(grid_spec[1, column])
+        magnitude = np.abs(tower[key].reshape(k + 1, k + 1))
+        image = axis.imshow(
+            np.log10(magnitude / magnitude.max() + 1e-8),
+            origin="lower",
+            cmap="viridis",
+            vmin=-6,
+            vmax=0,
+        )
+        axis.set_title(rf"$|c_{{jk}}|$ at $t={key:.2f}$", fontsize=9)
+        axis.set_xlabel("$k$")
+        if column == 0:
+            axis.set_ylabel("$j$")
+        if column == len(show) - 1:
+            figure.colorbar(
+                image, ax=axis, fraction=0.046, label=r"$\log_{10}$ relative magnitude"
+            )
+    figure.tight_layout()
+    directory = output_directory(output_dir)
+    figure.savefig(directory / "tower.pdf")
+    figure.savefig(directory / "tower.png", dpi=140)
+    plt.close(figure)
+    return directory / "tower.pdf"
+
+
+def plot_generation(generated, test, pmf, grid, output_dir=None):
+    """The generation page: chain samples against the terminal fit, and
+    generated against held-out statistics."""
+
+    figure, axes = plt.subplots(1, 3, figsize=(13.5, 4.2))
+
+    axis = axes[0]
+    edges = np.arange(grid[0] - 0.5, grid[-1] + 1.5, 1.0)
+    histogram, _, _ = np.histogram2d(
+        generated[:, 0], generated[:, 1], bins=[edges, edges]
+    )
+    axis.imshow(
+        np.log10(histogram.T + 1.0),
+        origin="lower",
+        extent=[edges[0], edges[-1], edges[0], edges[-1]],
+        cmap="Greys",
+        aspect="equal",
+    )
+    axis.contour(
+        grid,
+        grid,
+        pmf.T,
+        levels=np.max(pmf) * np.array([1e-4, 1e-3, 0.01, 0.1, 0.5]),
+        colors="#1b6ca8",
+        linewidths=1.0,
+    )
+    axis.set_xlabel("$w_i$ [min]")
+    axis.set_ylabel("$w_{i+1}$ [min]")
+    axis.set_title("reverse-chain samples, terminal fit as contours", fontsize=10)
+
+    axis = axes[1]
+    bins = np.arange(39.5, 151.5, 1.0)
+    axis.hist(
+        test[:, 1],
+        bins=bins,
+        density=True,
+        histtype="stepfilled",
+        facecolor="0.85",
+        edgecolor="0.7",
+        lw=0.4,
+        label="held-out record",
+    )
+    axis.hist(
+        generated[:, 1],
+        bins=bins,
+        density=True,
+        histtype="step",
+        edgecolor="#1b6ca8",
+        lw=1.6,
+        label="reverse chain",
+    )
+    axis.set_yscale("log")
+    axis.set_ylim(1e-6, 0.1)
+    axis.set_xlabel("interval [min]")
+    axis.set_ylabel("density (log)")
+    axis.set_title("generated against held-out marginal", fontsize=10)
+    axis.legend(frameon=False, fontsize=8)
+
+    axis = axes[2]
+    centres, gen_means, gen_errors, test_means, test_errors = [], [], [], [], []
+    for lo in np.arange(55, 125, 5):
+        centre = lo + 2.5
+        sel_g = (generated[:, 0] >= lo) & (generated[:, 0] < lo + 5)
+        sel_t = (test[:, 0] >= lo) & (test[:, 0] < lo + 5)
+        if sel_g.sum() >= 30 and sel_t.sum() >= 30:
+            centres.append(centre)
+            gen_means.append(generated[sel_g, 1].mean())
+            gen_errors.append(generated[sel_g, 1].std() / np.sqrt(sel_g.sum()))
+            test_means.append(test[sel_t, 1].mean())
+            test_errors.append(test[sel_t, 1].std() / np.sqrt(sel_t.sum()))
+    axis.errorbar(
+        centres,
+        test_means,
+        yerr=test_errors,
+        fmt="o",
+        color="0.25",
+        ms=4,
+        capsize=2,
+        label="held-out record",
+    )
+    axis.errorbar(
+        centres,
+        gen_means,
+        yerr=gen_errors,
+        fmt="s",
+        color="#1b6ca8",
+        ms=4,
+        capsize=2,
+        label="reverse chain",
+    )
+    axis.set_xlabel("$w_i$ [min]")
+    axis.set_ylabel("$\\mathbb{E}[w_{i+1}\\,|\\,w_i]$ [min]")
+    axis.set_title("conditional means, generated against data", fontsize=10)
+    axis.legend(frameon=False, fontsize=8)
+
+    figure.tight_layout()
+    directory = output_directory(output_dir)
+    figure.savefig(directory / "generation.pdf")
+    figure.savefig(directory / "generation.png", dpi=140)
+    plt.close(figure)
+    return directory / "generation.pdf"
+
+
 # ------------------------------------------------------------------ main --
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -326,8 +516,12 @@ def main() -> None:
     )
 
     tower = fit_tower(family, baseline, train, K)
-    stratification(tower, train, family, baseline, K)
-    generation_study(tower, family, baseline, K, test, rng)
+    t_star = stratification(tower, train, family, baseline, K)
+    generated = generation_study(tower, family, baseline, K, test, rng)
+    grid = np.arange(40, 151)
+    pmf = model_pmf(tower[0.0], family, baseline, K, grid)
+    print(f"tower figure: {plot_tower(tower, t_star, K)}")
+    print(f"generation figure: {plot_generation(generated, test, pmf, grid)}")
 
     direct = tower[0.0]
     pyramid = pyramid_fit(family, baseline, train, K)
