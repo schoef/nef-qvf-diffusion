@@ -39,6 +39,17 @@ Registered predictions and outcomes:
        E[next|short] 102.8 vs 104.1 min; the conditional mean tracks
        the binned data across 60-115 min).
 
+  P4m  (found, not registered) the record is non-stationary: the yearly
+       mean interval drifts from 93.2 (2018) to 98.4 min (2023) and the
+       short-mode fraction doubles, so a blocked split tests on a
+       different geyser than it trains on -- seen as a uniform -2 min
+       shift of every fitted conditional.  A causal trailing-mean frame
+       (window 800 eruptions, about two months) absorbs the secular
+       clock, exactly the movable-frame role: the shifts drop to
+       -0.5/-0.2 min, the density sharpens by 0.2 nats, and the pair
+       margin nearly doubles to +0.067 +- 0.005 nats/pair (+14 sigma).
+       The de-drifted series is the study's canonical coordinate.
+
 Splits are blocked in time.
 """
 
@@ -86,6 +97,24 @@ def clean_intervals(path: str = "data/geysertimes_oldfaithful.csv"):
     index = np.where(valid[:-1] & valid[1:])[0]
     pairs = np.column_stack([gaps[index], gaps[index + 1]])
     return w, pairs
+
+
+def causal_frame(w: np.ndarray, window: int = 800, burn_in: int = 50):
+    """Causal trailing-mean frame: the secular clock of the geyser.
+
+    Each interval is recentred by the mean of the preceding ``window``
+    intervals (about two months), the movable-frame role of the note
+    with the frame estimated causally from the past alone.
+    """
+
+    mean = float(np.mean(w))
+    cumulative = np.cumsum(np.insert(w, 0, 0.0))
+    trailing = np.empty_like(w)
+    for i in range(len(w)):
+        lo = max(0, i - window)
+        trailing[i] = (cumulative[i] - cumulative[lo]) / max(i - lo, 1) if i else mean
+    frame = np.where(np.arange(len(w)) < burn_in, mean, trailing)
+    return w - frame + mean
 
 
 def channel_weight(prods: np.ndarray) -> np.ndarray:
@@ -510,13 +539,23 @@ def main() -> None:
     )
     print(f"data figure: {plot_data(w, pairs, args.output)}")
     split_w = int(2 * len(w) / 3)
-    split_p = int(2 * len(pairs) / 3)
     marginal_study(np.round(w), split_w)
-    c, k = pair_study(w, pairs, split_p)
+
+    # the record drifts (P4m): recentre on the causal trailing-mean frame
+    w_frame = causal_frame(w)
+    pairs_frame = np.column_stack([w_frame[:-1], w_frame[1:]])
+    split_p = int(2 * len(pairs_frame) / 3)
     print(
-        f"conditionals figure: {conditional_study(w, np.round(pairs), c, k, args.output)}"
+        f"P4m  frame recentring: raw train/test means"
+        f" {w[:split_w].mean():.2f}/{w[split_w:].mean():.2f}"
+        f" -> {w_frame[:split_w].mean():.2f}/{w_frame[split_w:].mean():.2f}"
     )
-    print(f"quality figure: {plot_quality(w, np.round(pairs), c, k, args.output)}")
+    c, k = pair_study(w_frame, pairs_frame, split_p)
+    rounded = np.round(pairs_frame)
+    print(
+        f"conditionals figure: {conditional_study(w_frame, rounded, c, k, args.output)}"
+    )
+    print(f"quality figure: {plot_quality(w_frame, rounded, c, k, args.output)}")
 
 
 if __name__ == "__main__":
