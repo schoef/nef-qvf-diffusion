@@ -258,6 +258,94 @@ def empirical_transitions(x: np.ndarray, threshold: float) -> np.ndarray:
     return counts / counts.sum()
 
 
+# ------------------------------------------------------------- conditionals --
+def conditional_study(x: np.ndarray, trough: float, k: int = 6, output_dir=None):
+    """The operational test of the pair fit: p(next | current) against the
+    empirical conditionals, with the product model as the null."""
+
+    pairs = np.column_stack([x[:-1], x[1:]])
+    baseline = gamma_baseline(x)
+    phi = fitting_matrices(Gamma, baseline, k)
+    stack, _ = pair_fitting_matrices(phi)
+    b1 = np.asarray(Gamma.basis(pairs[:, 0], 2 * k, baseline), dtype=float)
+    b2 = np.asarray(Gamma.basis(pairs[:, 1], 2 * k, baseline), dtype=float)
+    r0 = (b1[:, :, None] * b2[:, None, :]).mean(axis=0)
+    c = continued_complex_fit(stack, r0.reshape(-1))["complex"]["coefficients"].reshape(
+        k + 1, k + 1
+    )
+    c1 = continued_complex_fit(phi, b1.mean(axis=0))["complex"]["coefficients"]
+
+    grid = np.linspace(38.0, 105.0, 500)
+    reference = np.asarray(Gamma.prob(grid, baseline), dtype=float)
+    basis_grid = np.asarray(Gamma.basis(grid, k, baseline), dtype=float)
+    marginal = reference * np.abs(basis_grid @ c1) ** 2
+    marginal /= np.trapezoid(marginal, grid)
+
+    def conditional(x_value):
+        bx = np.asarray(Gamma.basis(np.array([x_value]), k, baseline), dtype=float)[0]
+        law = reference * np.abs(basis_grid @ (c.T @ bx)) ** 2
+        return law / np.trapezoid(law, grid)
+
+    print(f"conditionals of the pair amplitude (Gamma baseline, K = {k}):")
+    figure, axes = plt.subplots(1, 2, figsize=(11.0, 3.8))
+    cases = [
+        (55.0, pairs[:, 0] < trough, "conditioned on a short wait ($x_i = 55$)"),
+        (80.0, pairs[:, 0] >= trough, "conditioned on a long wait ($x_i = 80$)"),
+    ]
+    for axis, (x_value, selection, title) in zip(axes, cases, strict=True):
+        nxt = pairs[selection, 1]
+        law = conditional(x_value)
+        axis.hist(
+            nxt,
+            bins=18,
+            density=True,
+            histtype="stepfilled",
+            facecolor="0.86",
+            edgecolor="0.72",
+            lw=0.5,
+            label=f"empirical next wait ({len(nxt)} pairs)",
+        )
+        axis.plot(
+            grid,
+            marginal,
+            ls=(0, (5, 2)),
+            color="#d95f02",
+            lw=1.3,
+            label="product model (fitted marginal)",
+        )
+        axis.plot(
+            grid,
+            law,
+            ls=(0, (2.6, 1.6)),
+            color="#1b6ca8",
+            lw=2.2,
+            label=r"pair amplitude $p(y\,|\,x_i)$",
+        )
+        axis.set_xlabel("next waiting time $x_{i+1}$ [min]")
+        axis.set_ylabel("density")
+        axis.set_title(title, fontsize=10)
+        axis.legend(frameon=False, fontsize=8)
+        long_mass = float(np.trapezoid(law[grid >= trough], grid[grid >= trough]))
+        empirical = float(np.mean(nxt >= trough))
+        null = float(np.trapezoid(marginal[grid >= trough], grid[grid >= trough]))
+        print(
+            f"      x_i {x_value:4.0f}:  P(next long)  empirical {empirical:.3f}"
+            f"   pair fit {long_mass:.3f}   product {null:.3f}"
+        )
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "old-faithful-conditionals.pdf"
+    figure.savefig(path)
+    figure.savefig(path.with_suffix(".png"), dpi=140)
+    plt.close(figure)
+    return path
+
+
 # ------------------------------------------------------------------ figure --
 def plot_data_and_baselines(x: np.ndarray, trough: float, output_dir=None):
     """First the data, then the baseline candidates."""
@@ -486,6 +574,9 @@ def main() -> None:
     print(f"      figure: {path}")
 
     pair_capacity_study(family, baseline, x, args.split)
+    print(
+        f"      conditionals figure: {conditional_study(x, trough, output_dir=args.output)}"
+    )
     factorisation_study(family, baseline, x, trough)
 
 
