@@ -16,8 +16,16 @@ Registered predictions and outcomes:
        baseline is competitive with the continuous families --
        CONFIRMED (Poisson within 0.005 nats of the best baseline);
   P2m  the pair amplitude beats the product decisively -- CONFIRMED
-       ONLY for the weighted coefficient objective (+0.043 +- 0.006
-       nats/pair, +7.7 sigma, weighted pair K=8 vs product K=6).  The
+       for the weighted coefficient objective (+7.7 sigma) and best
+       after a likelihood polish of the complex fit (+0.045 +- 0.005
+       nats/pair, +8.6 sigma, at K = 6): the complex likelihood is
+       chamber-free, so a short L-BFGS descent from the weighted
+       moment fit is safe, and it flattens the erratic K-dependence
+       the same way on the pair as on the marginal.  The marginal fit
+       itself sits at the nonparametric information floor (oracle
+       lattice-frequency model 3.8266, amplitude fit 3.8252), while in
+       2D the floor comparison reverses: the frequency model reaches
+       only 8.43 against the amplitude's 7.57.  The
        UNWEIGHTED objective fails catastrophically (-67 to -76 sigma
        at every baseline, cold and warm starts reaching the same
        optimum): on data spanning +-5 sigma of the baseline the
@@ -136,6 +144,43 @@ def marginal_study(w: np.ndarray, split: int):
         print(f"      {label:24s} K* {best[1]:2d}  NLL {best[0]:.4f}")
 
 
+# ------------------------------------------------------ likelihood polish --
+def likelihood_polish(family, baseline, c0: np.ndarray, train: np.ndarray, k: int):
+    """L-BFGS descent of the exact pair likelihood from a complex start.
+
+    The complex likelihood has no chambers (the nodal walls have real
+    codimension two), so descent from the weighted moment fit is safe.
+    """
+
+    from scipy.optimize import minimize
+
+    b1 = np.asarray(family.basis(train[:, 0], k, baseline), dtype=float)
+    b2 = np.asarray(family.basis(train[:, 1], k, baseline), dtype=float)
+    d = (k + 1) ** 2
+
+    def objective(v):
+        matrix = (v[:d] + 1j * v[d:]).reshape(k + 1, k + 1)
+        n2 = float(np.sum(v * v))
+        z = np.einsum("ij,jk,ik->i", b1, matrix, b2)
+        a2 = np.abs(z) ** 2 + 1e-300
+        value = -float(np.mean(np.log(a2))) + np.log(n2)
+        real_part = -2.0 / len(z) * np.einsum("i,ij,ik->jk", z.real / a2, b1, b2)
+        imag_part = -2.0 / len(z) * np.einsum("i,ij,ik->jk", z.imag / a2, b1, b2)
+        grad = np.concatenate([real_part.reshape(-1), imag_part.reshape(-1)])
+        return value, grad + 2.0 * v / n2
+
+    start = np.concatenate([c0.real, c0.imag])
+    result = minimize(
+        objective,
+        start,
+        jac=True,
+        method="L-BFGS-B",
+        options={"maxiter": 600, "ftol": 1e-13},
+    )
+    polished = result.x[:d] + 1j * result.x[d:]
+    return polished / np.linalg.norm(polished)
+
+
 # ------------------------------------------------------------------ P2m --
 def pair_study(w: np.ndarray, pairs: np.ndarray, split: int):
     """Weighted pair amplitude against the product of marginals; the
@@ -144,7 +189,7 @@ def pair_study(w: np.ndarray, pairs: np.ndarray, split: int):
     family, baseline = Poisson, PoissonParams(mean=float(np.mean(w)))
     train, test = np.round(pairs[:split]), np.round(pairs[split:])
     print("P2m  pair vs product at the Poisson lattice baseline:")
-    best_weighted = best_unweighted = best_product = None
+    best_weighted = best_unweighted = best_product = best_polished = None
     for k in PAIR_DEGREES:
         phi = fitting_matrices(family, baseline, k)
         stack, _ = pair_fitting_matrices(phi)
@@ -160,15 +205,18 @@ def pair_study(w: np.ndarray, pairs: np.ndarray, split: int):
         weighted = fit_complex_amplitude(
             stack, r0, weight=channel_weight(prods), initial=kron
         )["coefficients"]
+        polished = likelihood_polish(family, baseline, weighted, train, k)
         rows = {
             "product": pair_loglik(family, baseline, kron, test, k),
             "unweighted": pair_loglik(family, baseline, unweighted, test, k),
             "weighted": pair_loglik(family, baseline, weighted, test, k),
+            "polished": pair_loglik(family, baseline, polished, test, k),
         }
         print(
             f"      K {k}:  product {-rows['product'].mean():.4f}"
             f"   unweighted pair {-rows['unweighted'].mean():.4f}"
             f"   weighted pair {-rows['weighted'].mean():.4f}"
+            f"   polished {-rows['polished'].mean():.4f}"
         )
         if best_product is None or rows["product"].mean() > best_product[0].mean():
             best_product = (rows["product"], k)
@@ -179,14 +227,20 @@ def pair_study(w: np.ndarray, pairs: np.ndarray, split: int):
             best_unweighted = (rows["unweighted"], k)
         if best_weighted is None or rows["weighted"].mean() > best_weighted[0].mean():
             best_weighted = (rows["weighted"], k, weighted)
-    for label, best in (("weighted", best_weighted), ("unweighted", best_unweighted)):
+        if best_polished is None or rows["polished"].mean() > best_polished[0].mean():
+            best_polished = (rows["polished"], k, polished)
+    for label, best in (
+        ("polished", best_polished),
+        ("weighted", best_weighted),
+        ("unweighted", best_unweighted),
+    ):
         diff = best[0] - best_product[0]
         se = diff.std(ddof=1) / np.sqrt(len(diff))
         print(
             f"      {label} pair K*{best[1]} vs product K*{best_product[1]}:"
             f" margin {diff.mean():+.4f} +- {se:.4f}  ({diff.mean() / se:+.1f} sigma)"
         )
-    return best_weighted[2], best_weighted[1]
+    return best_polished[2], best_polished[1]
 
 
 # ------------------------------------------------------------------ P3m --
@@ -203,7 +257,7 @@ def conditional_study(w, pairs, c, k, output_dir=None):
         return law / law.sum()
 
     figure, axes = plt.subplots(1, 3, figsize=(13.5, 3.8))
-    print("P3m  conditionals of the weighted pair fit:")
+    print("P3m  conditionals of the polished pair fit:")
     for axis, (x_value, window) in zip(axes[:2], ((65.0, 3), (95.0, 2)), strict=False):
         law = conditional(x_value)
         selection = np.abs(pairs[:, 0] - x_value) <= window
@@ -224,7 +278,7 @@ def conditional_study(w, pairs, c, k, output_dir=None):
             color="#1b6ca8",
             lw=2.0,
             ls=(0, (2.6, 1.6)),
-            label=r"weighted pair fit $p(y\,|\,x_i)$",
+            label=r"polished pair fit $p(y\,|\,x_i)$",
         )
         axis.set_xlabel("next interval [min]")
         axis.set_ylabel("density")
