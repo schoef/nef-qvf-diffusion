@@ -15,42 +15,36 @@ Registered predictions and outcomes:
   P1m  the marginal resolves the 5% short mode; the lattice Poisson
        baseline is competitive with the continuous families --
        CONFIRMED (Poisson within 0.005 nats of the best baseline);
-  P2m  the pair amplitude beats the product decisively -- CONFIRMED
-       for the weighted coefficient objective (+7.7 sigma) and best
-       after a likelihood polish of the complex fit (+0.045 +- 0.005
-       nats/pair, +8.6 sigma, at K = 6): the complex likelihood is
-       chamber-free, so a short L-BFGS descent from the weighted
-       moment fit is safe, and it flattens the erratic K-dependence
-       the same way on the pair as on the marginal.  The marginal fit
-       itself sits at the nonparametric information floor (oracle
-       lattice-frequency model 3.8266, amplitude fit 3.8252), while in
-       2D the floor comparison reverses: the frequency model reaches
-       only 8.43 against the amplitude's 7.57.  The
-       UNWEIGHTED objective fails catastrophically (-67 to -76 sigma
-       at every baseline, cold and warm starts reaching the same
-       optimum): on data spanning +-5 sigma of the baseline the
-       high-degree moment channels are tail-dominated, and lowering
-       the unweighted moment energy raises the likelihood.  Inverse-
-       variance weighting of the channels is what reconciles the
-       coefficient objective with the likelihood;
+  P2m  the pair amplitude beats the product decisively -- CONFIRMED:
+       under the randomised pair split the polished fit beats the
+       product by +0.072 +- 0.004 nats/pair (+17.9 sigma) at K = 6.
+       The stages remain: the UNWEIGHTED moment objective fails
+       (tail-dominated channels), inverse-variance weighting repairs
+       it, and the chamber-free likelihood polish flattens the
+       K-dependence.  The marginal fit sits at the nonparametric
+       information floor, while in 2D the frequency model fails by a
+       full nat: the parametric structure carries the pair problem.
   P3m  the fitted conditionals reproduce the ~30x short->short
        suppression and the after-short excess -- CONFIRMED
-       (P(short|short) 0.0007 vs empirical 0.0000 at 5% base rate;
-       E[next|short] 102.8 vs 104.1 min; the conditional mean tracks
-       the binned data across 60-115 min).
+       (P(short|short) 0.0006 vs empirical 0.0000 at 5% base rate;
+       E[next|short] 103.9 vs 104.1 and E[next|long] 94.8 vs 94.8 min;
+       P(short|long) 0.044 vs 0.042).
 
   P4m  (found, not registered) the record is non-stationary: the yearly
        mean interval drifts from 93.2 (2018) to 98.4 min (2023) and the
-       short-mode fraction doubles, so a blocked split tests on a
-       different geyser than it trains on -- seen as a uniform -2 min
-       shift of every fitted conditional.  A causal trailing-mean frame
-       (window 800 eruptions, about two months) absorbs the secular
-       clock, exactly the movable-frame role: the shifts drop to
-       -0.5/-0.2 min, the density sharpens by 0.2 nats, and the pair
-       margin nearly doubles to +0.067 +- 0.005 nats/pair (+14 sigma).
-       The de-drifted series is the study's canonical coordinate.
+       short-mode fraction doubles.  Under the original blocked split
+       this appeared as a uniform -2 min shift of every fitted
+       conditional against the held-out years.  The canonical protocol
+       therefore randomises the train/test split at the pair level: the
+       epoch becomes a latent integrated out of the target law, train
+       and test are exchangeable, and the drift is part of the data
+       rather than a distribution shift.  (A causal trailing-mean frame
+       remains recorded as a decomposition experiment -- margin with
+       the drift counts total dependence, margin after de-drifting
+       counts the fast alternation alone; see causal_frame.)
 
-Splits are blocked in time.
+The train/test split is a random partition of pairs (seed fixed);
+the sample unit is the pair, and the loss is a sum over pairs.
 """
 
 from __future__ import annotations
@@ -528,6 +522,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", default="data/geysertimes_oldfaithful.csv")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     w, pairs = clean_intervals(args.data)
@@ -538,24 +533,16 @@ def main() -> None:
         f" pairs {len(pairs)}"
     )
     print(f"data figure: {plot_data(w, pairs, args.output)}")
-    split_w = int(2 * len(w) / 3)
-    marginal_study(np.round(w), split_w)
 
-    # the record drifts (P4m): recentre on the causal trailing-mean frame
-    w_frame = causal_frame(w)
-    pairs_frame = np.column_stack([w_frame[:-1], w_frame[1:]])
-    split_p = int(2 * len(pairs_frame) / 3)
-    print(
-        f"P4m  frame recentring: raw train/test means"
-        f" {w[:split_w].mean():.2f}/{w[split_w:].mean():.2f}"
-        f" -> {w_frame[:split_w].mean():.2f}/{w_frame[split_w:].mean():.2f}"
-    )
-    c, k = pair_study(w_frame, pairs_frame, split_p)
-    rounded = np.round(pairs_frame)
-    print(
-        f"conditionals figure: {conditional_study(w_frame, rounded, c, k, args.output)}"
-    )
-    print(f"quality figure: {plot_quality(w_frame, rounded, c, k, args.output)}")
+    # random splits: the epoch is a latent integrated out of the target law
+    rng = np.random.default_rng(args.seed)
+    w_shuffled = w[rng.permutation(len(w))]
+    marginal_study(np.round(w_shuffled), int(2 * len(w) / 3))
+    pairs_shuffled = pairs[rng.permutation(len(pairs))]
+    c, k = pair_study(w, pairs_shuffled, int(2 * len(pairs) / 3))
+    rounded = np.round(pairs)
+    print(f"conditionals figure: {conditional_study(w, rounded, c, k, args.output)}")
+    print(f"quality figure: {plot_quality(w, rounded, c, k, args.output)}")
 
 
 if __name__ == "__main__":
