@@ -49,8 +49,10 @@ import numpy as np
 
 from applications.amplitude_fit_complex import (
     continued_complex_fit,
+    fit_complex_amplitude,
     fitting_matrices,
 )
+from applications.old_faithful_modern import channel_weight, likelihood_polish
 from applications.two_site_diffusion import (
     factorise_pair_moments,
     pair_fitting_matrices,
@@ -160,9 +162,11 @@ def pair_capacity_study(family, baseline, x, split, lags=(1, 2)):
     """Each model selects its own capacity on held-out data; the margin
     is reported with the paired standard error over test pairs."""
 
-    print("P3  pair against product of marginals (held-out, blocked):")
+    print("P3  pair against product of marginals (held-out, randomised pairs):")
+    rng = np.random.default_rng(0)
     for lag in lags:
         pairs = np.column_stack([x[:-lag], x[lag:]])
+        pairs = pairs[rng.permutation(len(pairs))]
         train, test = pairs[:split], pairs[split:]
 
         def loglik(cv, k):
@@ -173,7 +177,7 @@ def pair_capacity_study(family, baseline, x, split, lags=(1, 2)):
             lr += np.log(np.asarray(family.prob(test[:, 1], baseline), dtype=float))
             return lr + np.log(np.abs(h) ** 2 + GUARD)
 
-        best_pair, best_product = None, None
+        best_pair, best_product, best_polished = None, None, None
         for k in PAIR_DEGREES:
             phi = fitting_matrices(family, baseline, k)
             stack, _ = pair_fitting_matrices(phi)
@@ -183,19 +187,30 @@ def pair_capacity_study(family, baseline, x, split, lags=(1, 2)):
             c = continued_complex_fit(stack, r0.reshape(-1))["complex"]["coefficients"]
             c1 = continued_complex_fit(phi, b1.mean(axis=0))["complex"]["coefficients"]
             c2 = continued_complex_fit(phi, b2.mean(axis=0))["complex"]["coefficients"]
+            kron = np.kron(c1, c2)
+            kron = kron / np.linalg.norm(kron)
+            prods = b1[:, :, None] * b2[:, None, :]
+            weighted = fit_complex_amplitude(
+                stack, r0.reshape(-1), weight=channel_weight(prods), initial=kron
+            )["coefficients"]
+            polished = likelihood_polish(family, baseline, weighted, train, k)
+            ll_polished = loglik(polished, k)
+            if best_polished is None or ll_polished.mean() > best_polished[0].mean():
+                best_polished = (ll_polished, k)
             ll_pair, ll_product = loglik(c, k), loglik(np.kron(c1, c2), k)
             if best_pair is None or ll_pair.mean() > best_pair[0].mean():
                 best_pair = (ll_pair, k)
             if best_product is None or ll_product.mean() > best_product[0].mean():
                 best_product = (ll_product, k)
-        difference = best_pair[0] - best_product[0]
+        difference = best_polished[0] - best_product[0]
         error = difference.std(ddof=1) / np.sqrt(len(difference))
         print(
-            f"      lag {lag}:  pair K*{best_pair[1]}"
-            f" NLL {-best_pair[0].mean():.4f}"
-            f"   product K*{best_product[1]}"
-            f" NLL {-best_product[0].mean():.4f}"
+            f"      lag {lag}:  polished K*{best_polished[1]}"
+            f" NLL {-best_polished[0].mean():.4f}"
+            f"   unweighted K*{best_pair[1]} {-best_pair[0].mean():.4f}"
+            f"   product K*{best_product[1]} {-best_product[0].mean():.4f}"
             f"   margin {difference.mean():+.4f} +- {error:.4f} nats/pair"
+            f" ({difference.mean() / error:+.1f} sigma)"
         )
 
 
@@ -270,9 +285,12 @@ def conditional_study(x: np.ndarray, trough: float, k: int = 6, output_dir=None)
     b1 = np.asarray(Gamma.basis(pairs[:, 0], 2 * k, baseline), dtype=float)
     b2 = np.asarray(Gamma.basis(pairs[:, 1], 2 * k, baseline), dtype=float)
     r0 = (b1[:, :, None] * b2[:, None, :]).mean(axis=0)
-    c = continued_complex_fit(stack, r0.reshape(-1))["complex"]["coefficients"].reshape(
-        k + 1, k + 1
-    )
+    kron0 = continued_complex_fit(stack, r0.reshape(-1))["complex"]["coefficients"]
+    prods = b1[:, :, None] * b2[:, None, :]
+    weighted = fit_complex_amplitude(
+        stack, r0.reshape(-1), weight=channel_weight(prods), initial=kron0
+    )["coefficients"]
+    c = likelihood_polish(Gamma, baseline, weighted, pairs, k).reshape(k + 1, k + 1)
     c1 = continued_complex_fit(phi, b1.mean(axis=0))["complex"]["coefficients"]
 
     grid = np.linspace(38.0, 105.0, 500)
@@ -567,9 +585,14 @@ def plot_quality(x, trough: float, k: int = 6, output_dir=None):
     b1 = np.asarray(Gamma.basis(pairs[:, 0], 2 * k, baseline), dtype=float)
     b2 = np.asarray(Gamma.basis(pairs[:, 1], 2 * k, baseline), dtype=float)
     r0 = (b1[:, :, None] * b2[:, None, :]).mean(axis=0)
-    matrix = continued_complex_fit(stack, r0.reshape(-1))["complex"][
-        "coefficients"
-    ].reshape(k + 1, k + 1)
+    start = continued_complex_fit(stack, r0.reshape(-1))["complex"]["coefficients"]
+    prods = b1[:, :, None] * b2[:, None, :]
+    weighted = fit_complex_amplitude(
+        stack, r0.reshape(-1), weight=channel_weight(prods), initial=start
+    )["coefficients"]
+    matrix = likelihood_polish(Gamma, baseline, weighted, pairs, k).reshape(
+        k + 1, k + 1
+    )
     c1 = continued_complex_fit(phi, b1.mean(axis=0))["complex"]["coefficients"]
     c2 = continued_complex_fit(phi, b2.mean(axis=0))["complex"]["coefficients"]
 
@@ -713,6 +736,9 @@ def main() -> None:
 
     x = load_waiting(args.data)
     print(f"waiting times: N {len(x)}, mean {np.mean(x):.1f}, std {np.std(x):.1f}")
+    x = x[np.random.default_rng(0).permutation(len(x))]  # randomised split;
+    # pair studies rebuild the ordered series, so reload for them
+    x_ordered = load_waiting(args.data)
 
     nll, k_star, c_star, label, family, baseline = select_baseline(x, args.split)
     trough = fitted_trough(family, baseline, c_star, k_star)
@@ -721,12 +747,15 @@ def main() -> None:
     path = plot_marginal(family, x, baseline, c_star, k_star, args.output)
     print(f"      figure: {path}")
 
-    pair_capacity_study(family, baseline, x, args.split)
+    pair_capacity_study(family, baseline, x_ordered, args.split)
     print(
-        f"      conditionals figure: {conditional_study(x, trough, output_dir=args.output)}"
+        f"      conditionals figure:"
+        f" {conditional_study(x_ordered, trough, output_dir=args.output)}"
     )
-    print(f"      quality figure: {plot_quality(x, trough, output_dir=args.output)}")
-    factorisation_study(family, baseline, x, trough)
+    print(
+        f"      quality figure: {plot_quality(x_ordered, trough, output_dir=args.output)}"
+    )
+    factorisation_study(family, baseline, x_ordered, trough)
 
 
 if __name__ == "__main__":
