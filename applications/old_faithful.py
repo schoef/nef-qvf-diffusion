@@ -57,7 +57,7 @@ from applications.two_site_diffusion import (
 )
 from nefqvf import Gamma, GammaParams, Normal, NormalParams
 
-FIGURE_SUBDIRECTORY = "old-faithful"
+FIGURE_SUBDIRECTORY = "old-faithful-1985"
 GUARD = 1e-300  # numerical floor inside the log only
 MARGINAL_DEGREES = (2, 3, 4, 5, 6, 8, 10)
 PAIR_DEGREES = (2, 3, 4, 6, 8)
@@ -339,7 +339,7 @@ def conditional_study(x: np.ndarray, trough: float, k: int = 6, output_dir=None)
         else Path(output_dir)
     )
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "old-faithful-conditionals.pdf"
+    path = directory / "conditionals.pdf"
     figure.savefig(path)
     figure.savefig(path.with_suffix(".png"), dpi=140)
     plt.close(figure)
@@ -500,7 +500,7 @@ def plot_data_and_baselines(x: np.ndarray, trough: float, output_dir=None):
         else Path(output_dir)
     )
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "old-faithful-data.pdf"
+    path = directory / "data.pdf"
     figure.savefig(path)
     figure.savefig(path.with_suffix(".png"), dpi=140)
     plt.close(figure)
@@ -549,9 +549,157 @@ def plot_marginal(family, x, baseline, c, k, output_dir=None):
         else Path(output_dir)
     )
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "old-faithful-marginal.pdf"
+    path = directory / "marginal.pdf"
     figure.savefig(path)
     figure.savefig(path.with_suffix(".png"), dpi=150)
+    plt.close(figure)
+    return path
+
+
+def plot_quality(x, trough: float, k: int = 6, output_dir=None):
+    """Joint contours, conditional fan, regime-averaged conditionals, and
+    the conditional mean, all against the data."""
+
+    pairs = np.column_stack([x[:-1], x[1:]])
+    baseline = gamma_baseline(x)
+    phi = fitting_matrices(Gamma, baseline, k)
+    stack, _ = pair_fitting_matrices(phi)
+    b1 = np.asarray(Gamma.basis(pairs[:, 0], 2 * k, baseline), dtype=float)
+    b2 = np.asarray(Gamma.basis(pairs[:, 1], 2 * k, baseline), dtype=float)
+    r0 = (b1[:, :, None] * b2[:, None, :]).mean(axis=0)
+    matrix = continued_complex_fit(stack, r0.reshape(-1))["complex"][
+        "coefficients"
+    ].reshape(k + 1, k + 1)
+    c1 = continued_complex_fit(phi, b1.mean(axis=0))["complex"]["coefficients"]
+    c2 = continued_complex_fit(phi, b2.mean(axis=0))["complex"]["coefficients"]
+
+    grid = np.linspace(40.0, 100.0, 400)
+    reference = np.asarray(Gamma.prob(grid, baseline), dtype=float)
+    basis_grid = np.asarray(Gamma.basis(grid, k, baseline), dtype=float)
+    amplitude = basis_grid @ matrix @ basis_grid.T
+    joint = reference[:, None] * reference[None, :] * np.abs(amplitude) ** 2
+    joint /= np.trapezoid(np.trapezoid(joint, grid, axis=1), grid)
+    marg1 = reference * np.abs(basis_grid @ c1) ** 2
+    marg1 /= np.trapezoid(marg1, grid)
+    marg2 = reference * np.abs(basis_grid @ c2) ** 2
+    marg2 /= np.trapezoid(marg2, grid)
+    product = np.outer(marg1, marg2)
+
+    def conditional_rows(bx):
+        laws = reference[None, :] * np.abs(bx @ matrix @ basis_grid.T) ** 2
+        return laws / np.trapezoid(laws, grid, axis=1)[:, None]
+
+    figure, axes = plt.subplots(2, 2, figsize=(11.0, 8.6))
+
+    axis = axes[0, 0]
+    axis.scatter(pairs[:, 0], pairs[:, 1], s=9, color="0.35", alpha=0.55, zorder=1)
+    axis.contour(
+        grid,
+        grid,
+        joint.T,
+        levels=np.max(joint) * np.array([0.03, 0.1, 0.25, 0.5, 0.8]),
+        colors="#1b6ca8",
+        linewidths=1.3,
+        zorder=2,
+    )
+    axis.contour(
+        grid,
+        grid,
+        product.T,
+        levels=np.max(product) * np.array([0.03, 0.25, 0.8]),
+        colors="#d95f02",
+        linewidths=0.9,
+        linestyles="dashed",
+        zorder=2,
+    )
+    axis.set_xlabel("$x_i$ [min]")
+    axis.set_ylabel("$x_{i+1}$ [min]")
+    axis.set_title("fitted joint (blue), product null (orange)", fontsize=10)
+
+    axis = axes[0, 1]
+    cmap = plt.get_cmap("coolwarm")
+    for v in (46, 52, 58, 64, 72, 78, 84, 90):
+        bx = np.asarray(Gamma.basis(np.array([float(v)]), k, baseline), dtype=float)
+        axis.plot(
+            grid,
+            conditional_rows(bx)[0],
+            color=cmap((v - 42) / 52),
+            lw=1.5,
+            label=f"$x_i={v}$",
+        )
+    axis.set_xlabel("next waiting time [min]")
+    axis.set_ylabel("density")
+    axis.set_title(r"fan of fitted conditionals $p(y\,|\,x_i)$", fontsize=10)
+    axis.legend(frameon=False, fontsize=7, ncol=2)
+
+    axis = axes[1, 0]
+    for selection, colour, label in (
+        (pairs[:, 0] < trough, "#b0413e", "short regime"),
+        (pairs[:, 0] >= trough, "#2a6f97", "long regime"),
+    ):
+        axis.hist(
+            pairs[selection, 1],
+            bins=18,
+            density=True,
+            histtype="stepfilled",
+            alpha=0.30,
+            facecolor=colour,
+            edgecolor=colour,
+            lw=0.8,
+            label=f"empirical | {label}",
+        )
+        bx = np.asarray(Gamma.basis(pairs[selection, 0], k, baseline), dtype=float)
+        axis.plot(
+            grid,
+            conditional_rows(bx).mean(axis=0),
+            color=colour,
+            lw=2.0,
+            ls=(0, (2.6, 1.6)),
+            label=f"fit averaged over {label}",
+        )
+    axis.set_xlabel("next waiting time [min]")
+    axis.set_ylabel("density")
+    axis.set_title("regime-averaged fitted conditionals", fontsize=10)
+    axis.legend(frameon=False, fontsize=7.5)
+
+    axis = axes[1, 1]
+    fan = conditional_rows(basis_grid)
+    axis.plot(
+        grid,
+        np.trapezoid(fan * grid[None, :], grid, axis=1),
+        color="#1b6ca8",
+        lw=2.0,
+        label=r"fitted $\mathbb{E}[x_{i+1}\,|\,x_i]$",
+    )
+    edges = np.linspace(43, 97, 10)
+    for lo, hi in zip(edges[:-1], edges[1:], strict=False):
+        selection = (pairs[:, 0] >= lo) & (pairs[:, 0] < hi)
+        if selection.sum() >= 5:
+            axis.errorbar(
+                0.5 * (lo + hi),
+                pairs[selection, 1].mean(),
+                yerr=pairs[selection, 1].std() / np.sqrt(selection.sum()),
+                fmt="o",
+                color="0.25",
+                ms=4,
+                capsize=2,
+            )
+    axis.axhline(float(np.mean(x)), color="0.6", ls=":", lw=1.0)
+    axis.set_xlabel("$x_i$ [min]")
+    axis.set_ylabel("$x_{i+1}$ [min]")
+    axis.set_title("conditional mean", fontsize=10)
+    axis.legend(frameon=False, fontsize=8)
+
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "quality.pdf"
+    figure.savefig(path)
+    figure.savefig(path.with_suffix(".png"), dpi=140)
     plt.close(figure)
     return path
 
@@ -577,6 +725,7 @@ def main() -> None:
     print(
         f"      conditionals figure: {conditional_study(x, trough, output_dir=args.output)}"
     )
+    print(f"      quality figure: {plot_quality(x, trough, output_dir=args.output)}")
     factorisation_study(family, baseline, x, trough)
 
 

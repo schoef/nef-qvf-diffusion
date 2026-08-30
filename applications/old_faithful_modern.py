@@ -54,9 +54,9 @@ from applications.amplitude_fit_complex import (
 from applications.two_site_diffusion import pair_fitting_matrices
 from nefqvf import Gamma, GammaParams, Normal, NormalParams, Poisson, PoissonParams
 
-FIGURE_SUBDIRECTORY = "old-faithful"
+FIGURE_SUBDIRECTORY = "old-faithful-modern"
 SHORT_THRESHOLD = 75.0
-PAIR_DEGREES = (4, 6, 8)
+PAIR_DEGREES = (4, 6, 8, 10, 12)
 
 
 def clean_intervals(path: str = "data/geysertimes_oldfaithful.csv"):
@@ -210,7 +210,7 @@ def conditional_study(w, pairs, c, k, output_dir=None):
         nxt = pairs[selection, 1]
         axis.hist(
             nxt,
-            bins=np.arange(40, 152, 3),
+            bins=np.arange(39.5, 151.5, 2.0),
             density=True,
             histtype="stepfilled",
             facecolor="0.86",
@@ -271,7 +271,112 @@ def conditional_study(w, pairs, c, k, output_dir=None):
         else Path(output_dir)
     )
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "geysertimes-conditionals.pdf"
+    path = directory / "conditionals.pdf"
+    figure.savefig(path)
+    figure.savefig(path.with_suffix(".png"), dpi=140)
+    plt.close(figure)
+    return path
+
+
+def plot_quality(w, pairs, c, k, output_dir=None):
+    """Joint contours over the 2D histogram, conditional fan, and the
+    regime-averaged conditionals for the modern record."""
+
+    family, baseline = Poisson, PoissonParams(mean=float(np.mean(w)))
+    matrix = c.reshape(k + 1, k + 1)
+    grid = np.arange(40, 151)
+    reference = np.asarray(family.prob(grid, baseline), dtype=float)
+    basis_grid = np.asarray(family.basis(grid, k, baseline), dtype=float)
+    amplitude = basis_grid @ matrix @ basis_grid.T
+    joint = reference[:, None] * reference[None, :] * np.abs(amplitude) ** 2
+    joint /= joint.sum()
+
+    def conditional_rows(bx):
+        laws = reference[None, :] * np.abs(bx @ matrix @ basis_grid.T) ** 2
+        return laws / laws.sum(axis=1)[:, None]
+
+    figure, axes = plt.subplots(1, 3, figsize=(13.5, 4.2))
+
+    axis = axes[0]
+    minute_bins = np.arange(39.5, 151.5, 1.0)
+    histogram, _, _ = np.histogram2d(
+        pairs[:, 0], pairs[:, 1], bins=[minute_bins, minute_bins]
+    )
+    axis.imshow(
+        np.log10(histogram.T + 1.0),
+        origin="lower",
+        extent=[39.5, 150.5, 39.5, 150.5],
+        cmap="Greys",
+        aspect="equal",
+    )
+    axis.contour(
+        grid,
+        grid,
+        joint.T,
+        levels=np.max(joint) * np.array([1e-4, 1e-3, 0.01, 0.1, 0.5]),
+        colors="#1b6ca8",
+        linewidths=1.0,
+    )
+    axis.set_xlabel("$w_i$ [min]")
+    axis.set_ylabel("$w_{i+1}$ [min]")
+    axis.set_title("fitted joint over the data (log-spaced levels)", fontsize=10)
+
+    axis = axes[1]
+    cmap = plt.get_cmap("coolwarm")
+    for v in (58, 64, 70, 80, 90, 100, 110):
+        bx = np.asarray(family.basis(np.array([float(v)]), k, baseline), dtype=float)
+        axis.plot(
+            grid,
+            conditional_rows(bx)[0],
+            color=cmap((v - 55) / 60),
+            lw=1.5,
+            label=f"$w_i={v}$",
+        )
+    axis.set_xlabel("next interval [min]")
+    axis.set_ylabel("density")
+    axis.set_title(r"fan of fitted conditionals $p(y\,|\,w_i)$", fontsize=10)
+    axis.legend(frameon=False, fontsize=7, ncol=2)
+
+    axis = axes[2]
+    for selection, colour, label in (
+        (pairs[:, 0] < SHORT_THRESHOLD, "#b0413e", "short regime"),
+        (pairs[:, 0] >= SHORT_THRESHOLD, "#2a6f97", "long regime"),
+    ):
+        axis.hist(
+            pairs[selection, 1],
+            bins=np.arange(39.5, 151.5, 2.0),
+            density=True,
+            histtype="stepfilled",
+            alpha=0.30,
+            facecolor=colour,
+            edgecolor=colour,
+            lw=0.8,
+            label=f"empirical | {label}",
+        )
+        bx = np.asarray(family.basis(pairs[selection, 0], k, baseline), dtype=float)
+        axis.plot(
+            grid,
+            conditional_rows(bx).mean(axis=0),
+            color=colour,
+            lw=2.0,
+            ls=(0, (2.6, 1.6)),
+            label=f"fit averaged over {label}",
+        )
+    axis.set_yscale("log")
+    axis.set_ylim(1e-5, 0.2)
+    axis.set_xlabel("next interval [min]")
+    axis.set_ylabel("density (log)")
+    axis.set_title("regime-averaged fitted conditionals", fontsize=10)
+    axis.legend(frameon=False, fontsize=7.5)
+
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "quality.pdf"
     figure.savefig(path)
     figure.savefig(path.with_suffix(".png"), dpi=140)
     plt.close(figure)
@@ -279,10 +384,12 @@ def conditional_study(w, pairs, c, k, output_dir=None):
 
 
 def plot_data(w, pairs, output_dir=None):
+    minute_bins = np.arange(39.5, 151.5, 1.0)  # integer-aligned: the data
+    # are minute-quantised, so any other width aliases into empty bins
     figure, axes = plt.subplots(1, 3, figsize=(13.5, 3.8))
     axes[0].hist(
         w,
-        bins=110,
+        bins=minute_bins,
         density=True,
         histtype="stepfilled",
         facecolor="0.85",
@@ -294,7 +401,7 @@ def plot_data(w, pairs, output_dir=None):
     axes[0].set_title(f"GeyserTimes 2016-2024: {len(w)} intervals", fontsize=10)
     axes[1].hist(
         w,
-        bins=110,
+        bins=minute_bins,
         density=True,
         histtype="stepfilled",
         facecolor="0.85",
@@ -305,10 +412,21 @@ def plot_data(w, pairs, output_dir=None):
     axes[1].set_xlabel("interval [min]")
     axes[1].set_ylabel("density (log)")
     axes[1].set_title("same, log scale: the short mode survives", fontsize=10)
-    axes[2].scatter(pairs[:, 0], pairs[:, 1], s=2, color="0.3", alpha=0.15)
+    histogram, _, _ = np.histogram2d(
+        pairs[:, 0], pairs[:, 1], bins=[minute_bins, minute_bins]
+    )
+    axes[2].imshow(
+        np.log10(histogram.T + 1.0),
+        origin="lower",
+        extent=[39.5, 150.5, 39.5, 150.5],
+        cmap="Greys",
+        aspect="equal",
+    )
     axes[2].set_xlabel("$w_i$ [min]")
     axes[2].set_ylabel("$w_{i+1}$ [min]")
-    axes[2].set_title(f"lag-1 pairs ({len(pairs)})", fontsize=10)
+    axes[2].set_title(
+        f"lag-1 pairs ({len(pairs)}), log$_{{10}}$(1 + count)", fontsize=10
+    )
     figure.tight_layout()
     directory = (
         Path("artifacts") / FIGURE_SUBDIRECTORY
@@ -316,7 +434,7 @@ def plot_data(w, pairs, output_dir=None):
         else Path(output_dir)
     )
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "geysertimes-data.pdf"
+    path = directory / "data.pdf"
     figure.savefig(path)
     figure.savefig(path.with_suffix(".png"), dpi=140)
     plt.close(figure)
@@ -344,6 +462,7 @@ def main() -> None:
     print(
         f"conditionals figure: {conditional_study(w, np.round(pairs), c, k, args.output)}"
     )
+    print(f"quality figure: {plot_quality(w, np.round(pairs), c, k, args.output)}")
 
 
 if __name__ == "__main__":
