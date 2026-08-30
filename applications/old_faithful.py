@@ -8,12 +8,19 @@ predictions and outcomes:
       limited -- CONFIRMED (baseline NLL 4.07 -> 3.82, both a Gamma and
       a width-selected Normal baseline land within 0.01 nats);
   P2  the lag-1 pair factorisation M = R W R^T recovers two members at
-      the marginal modes with the short->long asymmetry -- SPLIT: the
-      moment-CURVE factorisation fails (the regime laws are 20-26
-      degrees off every coherent curve: the shape-transport limitation
-      measured on real data), while freeing the members to the
-      empirical regime towers recovers W matching the empirical
-      transitions, including the near-zero short->short entry;
+      the marginal modes with the short->long asymmetry -- SPLIT.  The
+      regime laws ARE coherent members of the Normal family at the
+      regime width (sin of the tower angle 0.02-0.06 at sigma 5.7;
+      only the Gamma family, whose member width grows with the mean,
+      cannot carry them).  The moment-curve factorisation nevertheless
+      fails at N = 272 because its span estimator is noise-dominated:
+      the second direction of the top-2 eigenspan of the empirical
+      pair moment matrix is unstable under a split-half test
+      (principal overlaps 0.99/0.24 at degree 6), so the curve is
+      scanned against noise.  Freeing the members to the empirical
+      regime towers bypasses the span estimate and recovers W matching
+      the empirical transitions, including the near-zero short->short
+      entry (0.027 vs 0.026);
   P3  the pair amplitude beats the product of marginals at lag 1 and
       the latent chain is Markov -- SPLIT: the chain is Markov to three
       decimals (rho_2 = rho_1^2) and the dependence is unambiguous in
@@ -252,6 +259,166 @@ def empirical_transitions(x: np.ndarray, threshold: float) -> np.ndarray:
 
 
 # ------------------------------------------------------------------ figure --
+def plot_data_and_baselines(x: np.ndarray, trough: float, output_dir=None):
+    """First the data, then the baseline candidates."""
+
+    import dataclasses
+
+    mean = float(np.mean(x))
+    regime = x >= trough
+    grid = np.linspace(35.0, 110.0, 601)
+    figure, axes = plt.subplots(2, 2, figsize=(11.0, 7.0))
+
+    axis = axes[0, 0]
+    axis.plot(np.arange(len(x)), x, "-", color="0.75", lw=0.7, zorder=1)
+    axis.scatter(
+        np.arange(len(x)),
+        x,
+        c=np.where(regime, "#2a6f97", "#b0413e"),
+        s=8,
+        zorder=2,
+    )
+    axis.axhline(trough, color="0.4", ls=":", lw=1.0)
+    axis.set_xlabel("eruption index $i$")
+    axis.set_ylabel("waiting time [min]")
+    axis.set_title("the record: alternation between two regimes", fontsize=10)
+
+    axis = axes[0, 1]
+    axis.scatter(x[:-1], x[1:], s=10, color="0.25", alpha=0.6)
+    axis.axvline(trough, color="0.4", ls=":", lw=1.0)
+    axis.axhline(trough, color="0.4", ls=":", lw=1.0)
+    s = (x >= trough).astype(int)
+    quadrants = np.zeros((2, 2))
+    for a, b in zip(s[:-1], s[1:], strict=True):
+        quadrants[a, b] += 1
+    for (a, b), position in [
+        ((0, 0), (52, 52)),
+        ((0, 1), (52, 88)),
+        ((1, 0), (88, 52)),
+        ((1, 1), (88, 88)),
+    ]:
+        axis.text(
+            *position,
+            f"{int(quadrants[a, b])}",
+            fontsize=13,
+            color="#b0413e",
+            ha="center",
+            fontweight="bold",
+        )
+    axis.set_xlabel("$x_i$ [min]")
+    axis.set_ylabel("$x_{i+1}$ [min]")
+    axis.set_title(r"lag-1 pairs: short$\to$short nearly forbidden", fontsize=10)
+
+    axis = axes[1, 0]
+    axis.hist(
+        x,
+        bins=24,
+        density=True,
+        histtype="stepfilled",
+        facecolor="0.88",
+        edgecolor="0.72",
+        lw=0.5,
+        label="sample",
+    )
+    gb = gamma_baseline(x)
+    axis.plot(
+        grid,
+        np.asarray(Gamma.prob(grid, gb), dtype=float),
+        color="#d95f02",
+        ls=(0, (5, 2)),
+        lw=1.4,
+        label=f"Gamma, moment matched ($r$={gb.r:.0f})",
+    )
+    for sigma, colour, label, style in (
+        (float(np.std(x)), "#7b2d8b", "Normal, moment matched", (0, (2.5, 1.5))),
+        (8.1, "#2a6f97", "Normal, held-out width", "-"),
+        (5.7, "#1a7a4a", "Normal, regime width", (0, (2.5, 1.5))),
+    ):
+        params = NormalParams(mean=mean, sigma=sigma)
+        axis.plot(
+            grid,
+            np.asarray(Normal.prob(grid, params), dtype=float),
+            color=colour,
+            lw=1.4,
+            ls=style,
+            label=rf"{label} ($\sigma$={sigma:.1f})",
+        )
+    axis.set_xlabel("waiting time [min]")
+    axis.set_ylabel("density")
+    axis.set_title("baseline candidates", fontsize=10)
+    axis.legend(frameon=False, fontsize=7.5)
+
+    axis = axes[1, 1]
+    for selection, colour, label in (
+        (~regime, "#b0413e", "short regime"),
+        (regime, "#2a6f97", "long regime"),
+    ):
+        axis.hist(
+            x[selection],
+            bins=14,
+            density=True,
+            histtype="stepfilled",
+            alpha=0.35,
+            facecolor=colour,
+            edgecolor=colour,
+            lw=0.8,
+            label=(
+                f"{label}: {x[selection].mean():.1f}"
+                rf" $\pm$ {x[selection].std():.1f} min"
+            ),
+        )
+    narrow = NormalParams(mean=mean, sigma=5.7)
+    gb = gamma_baseline(x)
+    for target, colour in (
+        (float(x[~regime].mean()), "#b0413e"),
+        (float(x[regime].mean()), "#2a6f97"),
+    ):
+        member = NormalParams(mean=target, sigma=narrow.sigma)
+        axis.plot(
+            grid,
+            np.asarray(Normal.prob(grid, member), dtype=float),
+            color=colour,
+            lw=1.8,
+            ls=(0, (2.5, 1.5)),
+        )
+        wide = dataclasses.replace(gb, mean=target)
+        axis.plot(
+            grid,
+            np.asarray(Gamma.prob(grid, wide), dtype=float),
+            color="#d95f02",
+            lw=1.2,
+            ls=(0, (5, 2)),
+        )
+    axis.plot(
+        [],
+        [],
+        color="0.3",
+        ls=(0, (2.5, 1.5)),
+        lw=1.8,
+        label=r"Normal member, $\sigma$=5.7",
+    )
+    axis.plot(
+        [], [], color="#d95f02", ls=(0, (5, 2)), lw=1.2, label="Gamma member, $r$=27"
+    )
+    axis.set_xlabel("waiting time [min]")
+    axis.set_ylabel("density")
+    axis.set_title("regime laws against family members at their means", fontsize=10)
+    axis.legend(frameon=False, fontsize=7.5)
+
+    figure.tight_layout()
+    directory = (
+        Path("artifacts") / FIGURE_SUBDIRECTORY
+        if output_dir is None
+        else Path(output_dir)
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "old-faithful-data.pdf"
+    figure.savefig(path)
+    figure.savefig(path.with_suffix(".png"), dpi=140)
+    plt.close(figure)
+    return path
+
+
 def plot_marginal(family, x, baseline, c, k, output_dir=None):
     grid = np.linspace(35.0, 110.0, 601)
     reference = np.asarray(family.prob(grid, baseline), dtype=float)
@@ -314,6 +481,7 @@ def main() -> None:
     nll, k_star, c_star, label, family, baseline = select_baseline(x, args.split)
     trough = fitted_trough(family, baseline, c_star, k_star)
     print(f"      selected: {label}, K* {k_star}, fitted trough {trough:.1f} min")
+    print(f"      data figure: {plot_data_and_baselines(x, trough, args.output)}")
     path = plot_marginal(family, x, baseline, c_star, k_star, args.output)
     print(f"      figure: {path}")
 
