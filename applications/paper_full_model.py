@@ -164,15 +164,9 @@ def column_frame(name: str, rng: Any) -> dict[str, Any]:
     target = member_target(name, member)
     degree = min(RECENTRED_DEGREE, display_degree(name))
     sample = target.sample(SAMPLE_SIZE, rng)
-    moments = empirical(target, sample, 2 * degree)
     grid = support_grid(family, baseline, target.members)
 
-    fixed = continued_complex_fit(fitting_matrices(family, baseline, degree), moments)[
-        "complex"
-    ]["coefficients"]
     recentred = fit_recentred(family, baseline, sample, degree)
-
-    law_fixed = fitted_law(family, baseline, fixed, grid)
     law_recentred = fitted_law(
         family, recentred["member"], recentred["coefficients"], grid
     )
@@ -181,8 +175,7 @@ def column_frame(name: str, rng: Any) -> dict[str, Any]:
         "sample": sample,
         "grid": grid,
         "laws": [
-            ("fixed frame", law_fixed, variation(target, law_fixed, grid)),
-            ("recentred", law_recentred, variation(target, law_recentred, grid)),
+            ("recentred fit", law_recentred, variation(target, law_recentred, grid)),
         ],
         "title": rf"movable frame, $\theta_\star={theta:g}$",
     }
@@ -257,24 +250,25 @@ def draw_panel(
         label=r"reference $p_{\rm ref}$",
     )
     axis.plot(grid, truth, color=TARGET_COLOUR, linewidth=1.5, zorder=2, label="target")
-    (comparator_label, comparator_law, comparator_tv) = result["laws"][0]
-    (fit_label, fit_law, fit_tv) = result["laws"][1]
-    axis.plot(
-        grid,
-        comparator_law,
-        linestyle=(0, (4, 1.5, 1, 1.5)),
-        color=COMPARATOR_COLOUR,
-        linewidth=1.2,
-        zorder=3,
-        label=comparator_label,
-    )
+    comparator_law = None
+    for comparator_label, comparator_law, _ in result["laws"][:-1]:
+        axis.plot(
+            grid,
+            comparator_law,
+            linestyle=(0, (4, 1.5, 1, 1.5)),
+            color=COMPARATOR_COLOUR,
+            linewidth=1.2,
+            zorder=3,
+            label=comparator_label,
+        )
+    (fit_label, fit_law, fit_tv) = result["laws"][-1]
     axis.plot(
         grid,
         fit_law,
-        linestyle=(0, (1.5, 1.4)),
+        linestyle=(0, (2.6, 1.6)),
         color=FIT_COLOUR,
-        linewidth=2.0,
-        zorder=4,
+        linewidth=2.4,
+        zorder=5,
         label=fit_label,
     )
 
@@ -282,16 +276,14 @@ def draw_panel(
     axis.set_yscale("log")
     top = float(max(truth[inside].max(), fit_law[inside].max()))
     floors = [truth[inside & (truth > 0)].min()]
-    for law in (comparator_law, fit_law):
+    for _, law, _ in result["laws"]:
         visible = law[inside & (law > 1e-12)]
         if len(visible):
             floors.append(visible.min())
     bottom = max(0.3 * float(min(floors)), 1e-8, top * 1e-9)
     axis.set_ylim(bottom, top * 30.0)
-    axis.set_title(
-        rf"{result['title']}:  $D={comparator_tv:.1e}\,/\,{fit_tv:.1e}$",
-        fontsize=8.5,
-    )
+    quoted = r"\,/\,".join(f"{tv:.1e}" for _, _, tv in result["laws"])
+    axis.set_title(rf"{result['title']}:  $D={quoted}$", fontsize=8.5)
     axis.tick_params(labelsize=7.5)
     if leftmost:
         axis.set_ylabel("density", fontsize=9)
