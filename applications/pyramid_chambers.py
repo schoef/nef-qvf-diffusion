@@ -30,6 +30,10 @@ import argparse
 import time
 from typing import Any
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 
 from applications.amplitude_fit_complex import (
@@ -182,6 +186,38 @@ def main() -> None:
             f" (IQR {np.percentile(birth_ratios, 25):.3f}"
             f"-{np.percentile(birth_ratios, 75):.3f})"
         )
+
+    from pathlib import Path
+
+    figure, axis = plt.subplots(figsize=(7.2, 3.6))
+    names = list(results)
+    labels = {
+        "cold": "vacuum start,\nfull $K$",
+        "continued": "degree\ncontinuation",
+        "homotopy": "time homotopy,\nfull $K$",
+        "pyramid": "pyramid",
+    }
+    rng = np.random.default_rng(7)
+    for i, name in enumerate(names):
+        values = np.array(results[name])
+        x = i + rng.uniform(-0.13, 0.13, len(values))
+        colour = "#b0413e" if name in ("cold", "continued") else "#1b6ca8"
+        axis.plot(x, values, "o", ms=5, alpha=0.75, color=colour, mec="0.25")
+        axis.plot([i - 0.25, i + 0.25], [values.mean()] * 2, "-", color="0.2", lw=1.6)
+    axis.set_xticks(range(len(names)))
+    axis.set_xticklabels([labels[n] for n in names], fontsize=9)
+    axis.set_ylabel("total variation at $t=0$")
+    axis.set_title(
+        rf"four fits of identical data, twenty seeds"
+        rf" (bimodal $d={args.d}$, fixed $K={K}$, $N={args.n}$)",
+        fontsize=10,
+    )
+    figure.tight_layout()
+    directory = Path("artifacts") / "pyramid-chambers"
+    directory.mkdir(parents=True, exist_ok=True)
+    figure.savefig(directory / "pyramid-chambers.pdf")
+    figure.savefig(directory / "pyramid-chambers.png", dpi=140)
+    print(f"figure: {directory / 'pyramid-chambers.png'}")
 
 
 if __name__ == "__main__":
