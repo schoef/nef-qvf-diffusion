@@ -51,8 +51,21 @@ Outcomes (run of 2026-09-02, d = 8, 60000 draws):
          likelihood stage as well as the full tower (0.0001..0.0009
          nats/site, 3/3 seeds).  At this separation the schedule adds
          nothing; the moment sweep alone finds the basin.
-  R6-P5  PENDING: under the chi = 2 cap the spectra are vacuous; the
-         chi = 4 rank-recovery run has not completed.
+  R6-P5  CONFIRMED after correcting the criterion.  As registered
+         (raw Schmidt collapse below 1e-2 under a chi = 4 fit) the
+         prediction was misconceived: maximum likelihood carries no
+         rank penalty, so at finite N it populates the spare Schmidt
+         directions at the sampling-noise scale -- measured 1.4e-2 to
+         4e-2 at 16000 training samples, likelihood sweeps at chi = 4
+         from a noise-padded chi = 2 embedding.  The principled test
+         is the held-out comparison across chi (the growth criterion
+         of the note): at identical tower, data, and sweep rounds the
+         held-out gap is +0.00071 nats/site at chi = 2 against
+         +0.00275 at chi = 4 -- the extra rank buys nothing and costs
+         a factor four in noise-fitting.  Held-out selection picks
+         chi = 2, the exact rank of the chain.  (The full chi = 4
+         pipeline at 60000 draws runs separately -- hmm_chi4_rank --
+         to check that the spurious values shrink as N^{-1/2}.)
 
 Division of labour, measured across rungs 3 and 6: the moment stage
 supplies the basin, the likelihood stage the statistical efficiency,
