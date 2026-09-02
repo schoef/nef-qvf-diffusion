@@ -40,6 +40,23 @@ nothing imported).  Outcomes:
              against direct factorisation of q_t, and the takeoff of a
              double root as +- i sqrt(2t).
 
+  corner     corner formation at a node, three measured facts and one
+             refuted scaling.  The exact positive branch lifts off as
+             sqrt(q_t)(x0) = sqrt(2t)|h'(x0)| with unit prefactor
+             (ratio 1.0000 at t = 1e-5).  The finite-K population fit
+             tracks that boundary layer down to a finite time and then
+             SNAPS onto the noded branch at a fold: the coefficient
+             increments grow super-linearly into the snap (||dc||/dt
+             from 1.5 to 29), the snap itself is an O(0.1) jump, and
+             the path is analytic on both sides -- so no step size and
+             no first-order predictor crosses it, the sharp form of
+             the schedule-refinement paradox.  The toy's saddle-node
+             separation scales as (t_sn - t)^0.502 over three decades.
+             REFUTED: the conjectured snap-time scaling t_K ~ K^{-2}
+             (measured t_K roughly K-independent, 0.01-0.02 for
+             K = 8..20; the snap looks like an energy balance between
+             branches, not a resolution criterion).
+
   arbitrate  the closed loop -- flag the first birth, run one targeted
              multistart there, switch only on a clear held-out
              likelihood improvement: never worse than plain warm (0/9)
@@ -283,11 +300,46 @@ def study_rootflow(k: int = 3, t0: float = 0.5, t1: float = 0.9) -> None:
         )
 
 
+# ------------------------------------------------------------------ corner --
+def study_corner(alpha0: float = 1.2) -> None:
+    """Corner formation at a node: exact lift-off, fit tracking, snap."""
+
+    x0 = np.sqrt(1.0 - np.sqrt(2.0) / np.tan(alpha0))
+    hp = np.sin(alpha0) * np.sqrt(2.0) * x0
+    for k in (8, 12, 16, 20):
+        h0 = np.zeros(k + 1)
+        h0[0], h0[2] = np.cos(alpha0), np.sin(alpha0)
+        phi = product_matrices(Normal, BASELINE, k)
+        r_full = np.einsum("m,kmn,n->k", h0, phi, h0)
+        bx0 = np.asarray(Normal.basis(np.array([x0]), k, BASELINE), dtype=float)[0]
+        if k == 12:
+            b2k = np.asarray(
+                Normal.basis(np.array([x0]), 2 * k, BASELINE), dtype=float
+            )[0]
+            print("exact positive branch at the node (K = 12 targets):")
+            for t in np.geomspace(1e-5, 1e-2, 4):
+                q = float((np.exp(-np.arange(2 * k + 1) * t) * r_full) @ b2k)
+                print(
+                    f"  t {t:.1e}: sqrt(q_t(x0)) / sqrt(2t)|h'|"
+                    f" = {np.sqrt(max(q, 0)) / (np.sqrt(2 * t) * hp):.4f}"
+                )
+        c = np.zeros(k + 1)
+        c[0] = 1.0
+        snap = None
+        for t in np.geomspace(0.5, 2e-4, 60):
+            target = np.exp(-np.arange(2 * k + 1) * t) * r_full
+            c = fit_amplitude(phi, target, initial=c)["coefficients"]
+            ratio = abs(float(bx0 @ c)) / (np.sqrt(2 * t) * hp)
+            if snap is None and ratio < 0.5:
+                snap = t
+        print(f"K = {k:2d}: fit snaps onto the noded branch at t_K = {snap:.4f}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--study",
-        choices=("toy", "sweep", "diagnose", "rootflow"),
+        choices=("toy", "sweep", "diagnose", "rootflow", "corner"),
         default="toy",
     )
     args = parser.parse_args()
@@ -296,6 +348,7 @@ def main() -> None:
         "sweep": study_sweep,
         "diagnose": study_diagnose,
         "rootflow": study_rootflow,
+        "corner": study_corner,
     }[args.study]()
 
 
