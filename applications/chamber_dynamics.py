@@ -32,6 +32,14 @@ nothing imported).  Outcomes:
              births (poor specificity).  Node birth is necessary, not
              sufficient: a monitor, not a controller.
 
+  rootflow   the root-flow ODE: along the forward flow q_t = P_t q_0,
+             the roots of the degree-2K ratio obey
+             zdot_j = -(A q)(z_j)/q'(z_j), which for the Normal family
+             is the Calogero-Moser flow with linear drift,
+             zdot_j = z_j - 2 sum_{i != j} 1/(z_j - z_i).  Verified
+             against direct factorisation of q_t, and the takeoff of a
+             double root as +- i sqrt(2t).
+
   arbitrate  the closed loop -- flag the first birth, run one targeted
              multistart there, switch only on a clear held-out
              likelihood improvement: never worse than plain warm (0/9)
@@ -217,11 +225,78 @@ def study_diagnose() -> None:
             print(f"  K={k} d={d} seed={seed}: first node birth at t = {label}")
 
 
+# ---------------------------------------------------------------- rootflow --
+def ratio_roots(c: np.ndarray, k: int, phi: np.ndarray, t: float) -> np.ndarray:
+    """Roots of q_t = sum_k e^(-kt) R_k(0) phi_k for the amplitude c."""
+
+    r0 = np.einsum("m,kmn,n->k", c, phi, c)
+    coefficients = np.array(
+        [np.exp(-j * t) * r0[j] / np.sqrt(factorial(j)) for j in range(2 * k + 1)]
+    )
+    return np.sort_complex(hermite_e.hermeroots(coefficients))
+
+
+def study_rootflow(k: int = 3, t0: float = 0.5, t1: float = 0.9) -> None:
+    """Integrate the Calogero-Moser flow and compare with factorisation."""
+
+    rng = np.random.default_rng(0)
+    c = rng.standard_normal(k + 1)
+    c = c / np.linalg.norm(c)
+    phi = product_matrices(Normal, BASELINE, k)
+
+    z = ratio_roots(c, k, phi, t0).astype(complex)
+
+    def velocity(roots):
+        out = np.empty_like(roots)
+        for j in range(len(roots)):
+            others = np.delete(roots, j)
+            out[j] = roots[j] - 2.0 * np.sum(1.0 / (roots[j] - others))
+        return out
+
+    steps = 4000
+    dt = (t1 - t0) / steps
+    for _ in range(steps):
+        k1 = velocity(z)
+        k2 = velocity(z + 0.5 * dt * k1)
+        k3 = velocity(z + 0.5 * dt * k2)
+        k4 = velocity(z + dt * k3)
+        z = z + dt * (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
+
+    direct = ratio_roots(c, k, phi, t1)
+    # match root sets by nearest neighbour (labels are not preserved)
+    error = 0.0
+    remaining = list(direct)
+    for zj in z:
+        i = int(np.argmin([abs(zj - w) for w in remaining]))
+        error = max(error, abs(zj - remaining.pop(i)))
+    print(f"ODE vs direct factorisation, K={k}, t {t0} -> {t1}: max error {error:.2e}")
+
+    # takeoff of an exact double root: h has a real root, q_0 = h^2
+    c_node = np.array([np.cos(1.0), 0.0, np.sin(1.0)])  # alpha=1 > wall: node
+    phi2 = product_matrices(Normal, BASELINE, 2)
+    for t in (1e-6, 1e-4, 1e-2):
+        roots = ratio_roots(c_node, 2, phi2, t)
+        clearance = np.min(np.abs(roots.imag[np.abs(roots.imag) > 1e-12]))
+        print(
+            f"  double-root takeoff at t={t:.0e}:"
+            f" min|Im| {clearance:.6e}  vs sqrt(2t) {np.sqrt(2 * t):.6e}"
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--study", choices=("toy", "sweep", "diagnose"), default="toy")
+    parser.add_argument(
+        "--study",
+        choices=("toy", "sweep", "diagnose", "rootflow"),
+        default="toy",
+    )
     args = parser.parse_args()
-    {"toy": study_toy, "sweep": study_sweep, "diagnose": study_diagnose}[args.study]()
+    {
+        "toy": study_toy,
+        "sweep": study_sweep,
+        "diagnose": study_diagnose,
+        "rootflow": study_rootflow,
+    }[args.study]()
 
 
 if __name__ == "__main__":
