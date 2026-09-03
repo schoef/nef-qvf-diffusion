@@ -63,9 +63,18 @@ Outcomes (run of 2026-09-02, d = 8, 60000 draws):
          held-out gap is +0.00071 nats/site at chi = 2 against
          +0.00275 at chi = 4 -- the extra rank buys nothing and costs
          a factor four in noise-fitting.  Held-out selection picks
-         chi = 2, the exact rank of the chain.  (The full chi = 4
-         pipeline at 60000 draws runs separately -- hmm_chi4_rank --
-         to check that the spurious values shrink as N^{-1/2}.)
+         chi = 2, the exact rank of the chain.  The full chi = 4
+         pipeline at 60000 draws (hmm_chi4_rank, overnight run of
+         2026-09-03) agrees: held-out gap +0.00108 at chi = 4 against
+         +0.00015 at chi = 2, spurious Schmidt values sigma_3 about
+         0.020..0.024 and sigma_4 about 0.013..0.021 -- smaller at
+         the larger sample as noise-fitting predicts, though the
+         N^{-1/2} law is not cleanly isolated (the two runs also
+         differ in tower protocol and sweep rounds).  Bonus fact: the
+         chi = 4 tower gap is +0.0157 nats/site, indistinguishable
+         from chi = 2's +0.0153 -- the pair-moment residual gap is
+         invariant under extra bond rank, so it is an information
+         limit of the pair moments, not an expressivity limit.
 
 Division of labour, measured across rungs 3 and 6: the moment stage
 supplies the basin, the likelihood stage the statistical efficiency,
