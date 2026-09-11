@@ -30,6 +30,30 @@ Predictions registered before running:
          (m <= 3) at rank <= 2, without oscillations;
   MF-P3  the surviving channels are the width drift (psi_2-dominated)
          and an edge remnant, the latter larger in F2 than F2theta.
+
+Outcomes (run 2026-09-11):
+
+  F2 FAILED numerically, mechanism identified: linear-space fibers put
+  TeV events ~20 fiber widths out, the degree-8 projections are
+  tail-dominated (s_1 = 6.2 loaded on psi_8, conditional TV > 1), and
+  the root cause is physics -- the conditionals match the Gamma QVF
+  curve in (mu, sigma) but not in skew (2.06 vs 0.86).  F2theta is
+  sane (ladder 0.69, 0.078, 0.019) but channel 1 stays tail-loaded
+  and hurts the m = 0 bin.
+
+  F3 (the log gauge, added after the F2 failure with predictions
+  re-registered) delivers: ladder 0.0505, 0.0193, 0.0036 against
+  noise 0.0009 -- s_1 down 14x from the fixed frame's 0.70, two to
+  three significant channels, discarded weight 0.45% at rank 2
+  (MF-P1 exceeded).  Conditional TVs at rank 2: 0.003 to 0.017 in
+  ALL bins including m = 0 and m = 5, no oscillations (MF-P2
+  exceeded).  Channel 1 is low-mode (0.89 psi_1: the residual mean
+  drift of the two-parameter field), not tail junk; the survivors are
+  small mean/width drift plus an edge remnant (MF-P3 in substance).
+  The frame costs four registered numbers.  Lesson of F2 vs F3: the
+  moving frame must move in the gauge whose fiber tails are
+  polynomial-friendly -- here the log gauge, as the 1D frame race
+  already indicated.
 """
 
 from __future__ import annotations
