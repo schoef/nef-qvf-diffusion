@@ -146,6 +146,54 @@ def fixed_frame_spectrum(m, v, nb_params):
     return s
 
 
+def frame_f3(m_train, v_train):
+    """Translation field in log H_T: mu_v(m) = a + b log(m + 2), shared
+    fiber shape from the three-moment rule on the pooled recentred
+    variable."""
+
+    ks, weights, means = [], [], []
+    for k in range(M_MAX):
+        sel = v_train[m_train == k]
+        if len(sel) < 2000:
+            break
+        ks.append(k)
+        weights.append(len(sel))
+        means.append(sel.mean())
+    ks = np.array(ks, dtype=float)
+    weights = np.array(weights, dtype=float)
+    means = np.array(means)
+    design = np.column_stack([np.ones_like(ks), np.log(ks + 2.0)])
+    w_matrix = np.diag(weights)
+    coeffs = np.linalg.solve(design.T @ w_matrix @ design, design.T @ w_matrix @ means)
+    a, b = float(coeffs[0]), float(coeffs[1])
+
+    def mu_field(k):
+        return a + b * np.log(np.asarray(k, dtype=float) + 2.0)
+
+    u_train = v_train - mu_field(m_train)
+    frame = three_moment_gamma(u_train)
+    if frame is None:
+        shift = float(u_train.min()) - 0.05
+        s = u_train - shift
+        params = GammaParams(mean=s.mean(), r=s.mean() ** 2 / s.var())
+    else:
+        shift, params = frame
+    print(f"F3: mu field {a:.3f} + {b:.3f} log(m+2);"
+          f" fiber Gamma(theta={shift:.3f}, nu={params.r:.2f})")
+    return mu_field, shift, params
+
+
+def f3_projections(m, v, mu_field, shift, params, nb_params):
+    u = v - mu_field(m) - shift
+    phi_all = np.asarray(NegativeBinomial.basis(m, K1, nb_params), dtype=float)
+    psi_all = np.asarray(Gamma.basis(u, K2, params), dtype=float)
+    n = len(m)
+    R = phi_all.T @ psi_all / n
+    R2 = (phi_all**2).T @ (psi_all**2) / n
+    errors = np.sqrt(np.maximum(R2 / n - R**2 / n, 0.0))
+    return R, errors
+
+
 # -------------------------------------------------------------------- main --
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
@@ -185,8 +233,80 @@ def main() -> None:
         print("  discarded weight at rank r: "
               + " ".join(f"r={r}:{t:.4f}" for r, t in zip(RANKS, tail)))
 
+    mu_field, f3_shift, f3_params = frame_f3(m[tr], v[tr])
+    R3, dR3 = f3_projections(m[tr], v[tr], mu_field, f3_shift, f3_params, nb_params)
+    models3, s3, u3, vt3 = staged_models(R3)
+    spectra["F3 log"] = s3
+    noise3 = float(np.median(dR3)) * np.sqrt(max(R3.shape))
+    print("F3 channels: " + " ".join(f"{x:.4f}" for x in s3[:6])
+          + f"   noise ~ {noise3:.5f}")
+    print("  F3 channel 1 site-2 vector: " + " ".join(f"{x:+.3f}" for x in vt3[0]))
+    tail3 = [float(np.sum(s3[r:] ** 2) / np.sum(s3**2)) for r in RANKS]
+    print("  discarded weight at rank r: "
+          + " ".join(f"r={r}:{t3:.4f}" for r, t3 in zip(RANKS, tail3)))
+
     # ------------------------------------------------ conditional validation --
     keep = []
+
+    # F3 conditionals, in log H_T
+    phi = np.asarray(
+        NegativeBinomial.basis(np.arange(0.0, M_MAX), K1, nb_params), dtype=float
+    )
+    canvas3 = ROOT.TCanvas("cF3", "", 1800, 950)
+    canvas3.Divide(3, 2)
+    tv3 = {r: [] for r in RANKS}
+    for panel, k in enumerate(M_BINS):
+        pad = canvas3.cd(panel + 1)
+        pad.SetLogy()
+        sel = v[he][m[he] == k]
+        edges = np.linspace(np.log(60.0), np.log(2500.0), 61)
+        counts, _ = np.histogram(sel, bins=edges)
+        frac = len(sel) / len(he)
+        density = counts / counts.sum() / np.diff(edges)
+        h = ROOT.TH1D(f"hF3{k}",
+                      f";log H_{{T}}  (m = {k}, frac {frac:.4f});conditional density  --  F3",
+                      len(edges) - 1, edges[0], edges[-1])
+        for i, c in enumerate(density):
+            h.SetBinContent(i + 1, c)
+        h.SetLineColor(ROOT.kBlack)
+        h.SetLineWidth(3)
+        h.SetMinimum(1e-6)
+        h.Draw("hist")
+        keep.append(h)
+        legend = ROOT.TLegend(0.14, 0.16, 0.5, 0.45)
+        legend.AddEntry(h, "data (held-out)", "l")
+        grid = np.linspace(np.log(60.0), np.log(2500.0), 800)
+        ug = grid - float(mu_field(k)) - f3_shift
+        inside = ug > 1e-9
+        basis_g = np.asarray(
+            Gamma.basis(np.maximum(ug, 1e-9), K2, f3_params), dtype=float
+        )
+        ref_g = np.asarray(Gamma.prob(np.maximum(ug, 1e-9), f3_params), dtype=float)
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        for index, r in enumerate(RANKS):
+            a3 = phi[k] @ models3[r]
+            law = np.where(inside, ref_g * (basis_g @ a3), 0.0)
+            conditional = law / max(a3[0], 1e-12)
+            graph = ROOT.TGraph(len(grid))
+            for i, (x, y) in enumerate(zip(grid, conditional)):
+                graph.SetPoint(i, x, max(y, 1e-12))
+            graph.SetLineColor(COLORS[index])
+            graph.SetLineWidth(2)
+            graph.Draw("l same")
+            keep.append(graph)
+            model_bins = np.interp(centres, grid, conditional) * np.diff(edges)
+            tv = 0.5 * float(np.sum(np.abs(model_bins - counts / counts.sum())))
+            tv3[r].append(tv)
+            legend.AddEntry(graph, f"rank {r}  (TV {tv:.4f})", "l")
+        legend.SetTextSize(0.032)
+        legend.Draw()
+        keep.append(legend)
+    canvas3.SaveAs(str(OUT / "conditionals-F3.png"))
+    canvas3.SaveAs(str(OUT / "conditionals-F3.pdf"))
+    for r in RANKS:
+        print(f"F3 rank {r}: conditional TV "
+              + " ".join(f"{t3:.4f}" for t3 in tv3[r]))
+
     for name in ("F2", "F2theta"):
         nu, mean_field, theta_field, models, s = variant_data[name]
         phi = np.asarray(
@@ -288,6 +408,10 @@ def main() -> None:
     publish(
         [OUT / "conditionals-F2theta.png", OUT / "conditionals-F2theta.pdf"],
         "pair-moving/conditionals-F2theta",
+    )
+    publish(
+        [OUT / "conditionals-F3.png", OUT / "conditionals-F3.pdf"],
+        "pair-moving/conditionals-F3",
     )
     publish([], "pair-moving")
 
