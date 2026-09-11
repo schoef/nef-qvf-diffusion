@@ -253,6 +253,7 @@ def draw_continuous(res, title, canvas_pad):
 
 
 def draw_summary(results_m, res_a, res_b, canvas_pad_spec, canvas_pad_tv):
+    canvas_pad_spec.cd()
     canvas_pad_spec.SetLogy()
     frame = ROOT.TH1D("fs", ";mode k;|R_k| and its sampling error", 2 * K_MAX, 0.5, 2 * K_MAX + 0.5)
     frame.SetMinimum(1e-6)
@@ -282,6 +283,7 @@ def draw_summary(results_m, res_a, res_b, canvas_pad_spec, canvas_pad_tv):
     legend.Draw()
     keep.append(legend)
 
+    canvas_pad_tv.cd()
     canvas_pad_tv.SetLogy()
     frame2 = ROOT.TH1D("ft", ";truncation K;TV to held-out half", K_MAX + 1, -0.5, K_MAX + 0.5)
     frame2.SetMinimum(2e-4)
