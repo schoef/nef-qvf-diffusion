@@ -1,4 +1,4 @@
-"""Publish plots to the CERN www area from CBE, via Kerberos and xrdcp.
+"""Publish plots to the CERN www area from CBE via plain xrdcp.
 
 Usage, from the repo root on CBE:
 
@@ -7,53 +7,33 @@ Usage, from the repo root on CBE:
 or from another script:
 
     from applications.cms.www import publish
-    publish(["plot.png", "plot.pdf"], "nefqvf-pair")
+    publish(["plot.png", "plot.pdf"], "quicklook")
 
-Requires a CERN Kerberos ticket on the machine; obtain one with
-
-    KRB5_CONFIG=/mnt/hephy/cms/Tools/krb5.conf kinit -fp schoef@CERN.CH
-
-The files land under /eos/user/s/schoef/www/Jets/0070/<subdir> and are
-served at https://schoef.web.cern.ch/schoef/Jets/0070/<subdir>/; an
-index.php is copied alongside so the directory is browsable.
+Files land under /eos/user/s/schoef/www/nef-qvf-diffusion/TT2l-study/<subdir>
+and are served at
+https://schoef.web.cern.ch/schoef/nef-qvf-diffusion/TT2l-study/<subdir>/;
+an index.php is copied alongside so the directory is browsable.
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 EOS = "root://eosuser.cern.ch"
-BASE = "/eos/user/s/schoef/www/Jets/0070"
-URL = "https://schoef.web.cern.ch/schoef/Jets/0070"
+BASE = "/eos/user/s/schoef/www/nef-qvf-diffusion/TT2l-study"
+URL = "https://schoef.web.cern.ch/schoef/nef-qvf-diffusion/TT2l-study"
 INDEX_PHP = (
     "/users/robert.schoefbeck/CMS/ML/HEPHY-uncertainty/common/scripts/php/index.php"
 )
-KRB5_CONFIG = "/mnt/hephy/cms/Tools/krb5.conf"
-
-
-def _environment() -> dict:
-    environment = dict(os.environ)
-    environment["KRB5_CONFIG"] = KRB5_CONFIG
-    environment["CERN_USER"] = "schoef"
-    return environment
 
 
 def publish(paths, subdir: str) -> list[str]:
-    """Copy the files to www/Jets/0070/<subdir>; return the public URLs."""
+    """Copy the files one by one to TT2l-study/<subdir>; return the URLs."""
 
-    environment = _environment()
-    if subprocess.run(["klist", "-s"], env=environment).returncode != 0:
-        raise RuntimeError(
-            "no valid Kerberos ticket; run\n"
-            f"  KRB5_CONFIG={KRB5_CONFIG} kinit -fp schoef@CERN.CH"
-        )
-    destination = f"{BASE}/{subdir}"
-    subprocess.run(
-        ["xrdfs", EOS, "mkdir", "-p", destination], env=environment, check=True
-    )
+    destination = f"{BASE}/{subdir}" if subdir else BASE
+    subprocess.run(["xrdfs", EOS, "mkdir", "-p", destination], check=True)
     urls = []
     copies = [str(p) for p in paths]
     if Path(INDEX_PHP).exists():
@@ -61,12 +41,12 @@ def publish(paths, subdir: str) -> list[str]:
     for path in copies:
         name = Path(path).name
         subprocess.run(
-            ["xrdcp", "-f", "--nopbar", path, f"{EOS}//{destination.lstrip('/')}/{name}"],
-            env=environment,
+            ["xrdcp", "-f", "--nopbar", path,
+             f"{EOS}//{destination.lstrip('/')}/{name}"],
             check=True,
         )
         if name != "index.php":
-            urls.append(f"{URL}/{subdir}/{name}")
+            urls.append(f"{URL}/{subdir}/{name}" if subdir else f"{URL}/{name}")
     for url in urls:
         print(url)
     return urls
