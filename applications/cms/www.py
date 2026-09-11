@@ -17,6 +17,7 @@ an index.php is copied alongside so the directory is browsable.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,13 +28,21 @@ URL = "https://schoef.web.cern.ch/schoef/nef-qvf-diffusion/TT2l-study"
 INDEX_PHP = (
     "/users/robert.schoefbeck/CMS/ML/HEPHY-uncertainty/common/scripts/php/index.php"
 )
+PROXY = "/users/robert.schoefbeck/.private/.proxy"
+
+
+def _environment() -> dict:
+    environment = dict(os.environ)
+    environment.setdefault("X509_USER_PROXY", PROXY)
+    return environment
 
 
 def publish(paths, subdir: str) -> list[str]:
     """Copy the files one by one to TT2l-study/<subdir>; return the URLs."""
 
     destination = f"{BASE}/{subdir}" if subdir else BASE
-    subprocess.run(["xrdfs", EOS, "mkdir", "-p", destination], check=True)
+    environment = _environment()
+    subprocess.run(["xrdfs", EOS, "mkdir", "-p", destination], check=True, env=environment)
     urls = []
     copies = [str(p) for p in paths]
     if Path(INDEX_PHP).exists():
@@ -44,6 +53,7 @@ def publish(paths, subdir: str) -> list[str]:
             ["xrdcp", "-f", "--nopbar", path,
              f"{EOS}//{destination.lstrip('/')}/{name}"],
             check=True,
+            env=environment,
         )
         if name != "index.php":
             urls.append(f"{URL}/{subdir}/{name}" if subdir else f"{URL}/{name}")
